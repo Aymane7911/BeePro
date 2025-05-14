@@ -2,14 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet } from 'lucide-react';
+import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle } from 'lucide-react';
+import { SearchIcon } from '@heroicons/react/outline';
+
 
 // Mock data - in a real implementation, this would come from your backend microservices
 const initialData = {
-  jars: [
-    { name: 'Glass Jars', count: 245, color: '#4299e1' },
-    { name: 'Plastic Jars', count: 157, color: '#38b2ac' },
-    { name: 'Metal Jars', count: 89, color: '#805ad5' }
+  containers: [
+    { name: 'Glass Containers', weight: 245, color: '#4299e1' },
+    { name: 'Plastic Containers', weight: 157, color: '#38b2ac' },
+    { name: 'Metal Containers', weight: 89, color: '#805ad5' }
   ],
   labels: [
     { name: 'Standard', count: 189, color: '#f56565' },
@@ -17,10 +19,10 @@ const initialData = {
     { name: 'Custom', count: 157, color: '#ecc94b' }
   ],
   batches: [
-    { id: 'B1001', jarType: 'Glass', labelType: 'Premium', quantity: 50, date: '2025-05-10' },
-    { id: 'B1002', jarType: 'Plastic', labelType: 'Standard', quantity: 75, date: '2025-05-11' },
-    { id: 'B1003', jarType: 'Metal', labelType: 'Custom', quantity: 30, date: '2025-05-12' },
-    { id: 'B1004', jarType: 'Glass', labelType: 'Standard', quantity: 65, date: '2025-05-13' }
+    { id: 'B1001', containerType: 'Glass', labelType: 'Premium', weightKg: 50, date: '2025-05-10' },
+    { id: 'B1002', containerType: 'Plastic', labelType: 'Standard', weightKg: 75, date: '2025-05-11' },
+    { id: 'B1003', containerType: 'Metal', labelType: 'Custom', weightKg: 30, date: '2025-05-12' },
+    { id: 'B1004', containerType: 'Glass', labelType: 'Standard', weightKg: 65, date: '2025-05-13' }
   ],
   tokenStats: {
     totalTokens: 1000,
@@ -28,7 +30,13 @@ const initialData = {
     qualityOnly: 100,
     bothCertifications: 100,
     remainingTokens: 700,
-    totalJars: 2000
+    totalKg: 2000
+  },
+  certifiedHoneyWeight: {
+    originOnly: 250, // weight in kg
+    qualityOnly: 450, // weight in kg
+    bothCertifications: 150, // weight in kg
+    uncertified: 1150 // weight in kg
   }
 };
 
@@ -40,12 +48,12 @@ const tokenDistributionData = [
   { name: 'Remaining Tokens', value: 700, color: '#CBD5E0' }
 ];
 
-// Jar certification status data
-const jarStatusData = [
-  { name: 'Origin Only', value: 100, color: '#3182CE' },
-  { name: 'Quality Only', value: 100, color: '#38A169' },
-  { name: 'Both Certifications', value: 100, color: '#805AD5' },
-  { name: 'No Certification', value: 1700, color: '#CBD5E0' }
+// Honey certification status data
+const honeyStatusData = [
+  { name: 'Origin Only', value: 250, color: '#3182CE' },
+  { name: 'Quality Only', value: 450, color: '#38A169' },
+  { name: 'Both Certifications', value: 150, color: '#805AD5' },
+  { name: 'No Certification', value: 1150, color: '#CBD5E0' }
 ];
 
 // A microservice dashboard for jar inventory management
@@ -55,6 +63,21 @@ export default function JarManagementDashboard() {
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleString());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [token] = useState("HCT-73829-ABC45"); // Placeholder token
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [showBuyTokensModal, setShowBuyTokensModal] = useState(false);
+  const [tokensToAdd, setTokensToAdd] = useState(100);
+  const [batchFormData, setBatchFormData] = useState({
+    containerType: 'Glass',
+    labelType: 'Standard',
+    weightKg: 10,
+    weights: {
+      originOnly: data.certifiedHoneyWeight.originOnly,
+      qualityOnly: data.certifiedHoneyWeight.qualityOnly,
+      bothCertifications: data.certifiedHoneyWeight.bothCertifications
+    }
+  });
+  const [batchNumber, setBatchNumber] = useState('');
+  const [notification, setNotification] = useState({ show: false, message: '' });
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -85,8 +108,202 @@ export default function JarManagementDashboard() {
     }, 1000);
   };
 
+  const handleBatchFormChange = (e) => {
+    const { name, value } = e.target;
+    if (name.startsWith('weight_')) {
+      const certType = name.replace('weight_', '');
+      setBatchFormData({
+        ...batchFormData,
+        weights: {
+          ...batchFormData.weights,
+          [certType]: parseInt(value, 10) || 0
+        }
+      });
+    } else {
+      setBatchFormData({
+        ...batchFormData,
+        [name]: value
+      });
+    }
+  };
+
+  const handleBuyTokens = () => {
+    // In a real app, this would connect to a payment processor
+    // For demo purposes, we'll just update the token count
+    const updatedTokenStats = {
+      ...data.tokenStats,
+      totalTokens: data.tokenStats.totalTokens + tokensToAdd,
+      remainingTokens: data.tokenStats.remainingTokens + tokensToAdd
+    };
+    
+    setData({
+      ...data,
+      tokenStats: updatedTokenStats
+    });
+    
+    setShowBuyTokensModal(false);
+  };
+
+  const createBatch = () => {
+  // Generate strong batch number with timestamp
+  const timestamp = new Date().getTime();
+  const strongBatchNumber = `${batchNumber}-${timestamp}`;
+  
+  // In a real app, you would send this data to your backend
+  const newBatch = {
+    id: strongBatchNumber,
+    containerType: batchFormData.containerType,
+    labelType: batchFormData.labelType,
+    weightKg: parseInt(batchFormData.weightKg, 10),
+    date: new Date().toISOString().split('T')[0]
+  };
+
+  setData({
+    ...data,
+    batches: [newBatch, ...data.batches],
+    certifiedHoneyWeight: {
+      ...batchFormData.weights
+    }
+  });
+
+  // Show notification with new batch number
+  setNotification({
+    show: true,
+    message: `Batch created successfully! Your batch number is: ${strongBatchNumber}`
+  });
+  
+  // Hide notification after 5 seconds
+  setTimeout(() => {
+    setNotification({ show: false, message: '' });
+  }, 5000);
+
+  // Reset and close modal
+  setBatchNumber('');
+  setShowBatchModal(false);
+};
+    const [searchTerm, setSearchTerm] = useState("");
+    const [showAllBatches, setShowAllBatches] = useState(false);
+    const [expandedBatches, setExpandedBatches] = useState([]);
+    // Sample batch data
+    const allBatches = [
+      {
+        id: "B-2025-001",
+        name: "January Organic Coffee",
+        status: "Certified",
+        expiryDate: "2025-12-31",
+        certificationDate: "2025-01-15",
+        completedChecks: 8,
+        totalChecks: 8,
+        totalKg: 1250,
+        jarsUsed: 500,
+        originOnly: 250,
+        originOnlyPercent: 20,
+        qualityOnly: 125,
+        qualityOnlyPercent: 10,
+        bothCertifications: 750,
+        bothCertificationsPercent: 60,
+        uncertified: 125,
+        uncertifiedPercent: 10
+      },
+      {
+        id: "B-2025-002",
+        name: "February Robusta Blend",
+        status: "Pending",
+        expiryDate: "-",
+        certificationDate: "-",
+        completedChecks: 5,
+        totalChecks: 8,
+        totalKg: 980,
+        jarsUsed: 392,
+        originOnly: 300,
+        originOnlyPercent: 30.6,
+        qualityOnly: 150,
+        qualityOnlyPercent: 15.3,
+        bothCertifications: 180,
+        bothCertificationsPercent: 18.4,
+        uncertified: 350,
+        uncertifiedPercent: 35.7
+      },
+      {
+        id: "B-2025-003",
+        name: "March Arabica Premium",
+        status: "In Progress",
+        expiryDate: "-",
+        certificationDate: "-",
+        completedChecks: 3,
+        totalChecks: 8,
+        totalKg: 1500,
+        jarsUsed: 600,
+        originOnly: 450,
+        originOnlyPercent: 30,
+        qualityOnly: 225,
+        qualityOnlyPercent: 15,
+        bothCertifications: 225,
+        bothCertificationsPercent: 15,
+        uncertified: 600,
+        uncertifiedPercent: 40
+      },
+      {
+        id: "B-2025-004",
+        name: "Q1 Specialty Blend",
+        status: "Certified",
+        expiryDate: "2025-12-15",
+        certificationDate: "2025-03-20",
+        completedChecks: 8,
+        totalChecks: 8,
+        totalKg: 850,
+        jarsUsed: 340,
+        originOnly: 170,
+        originOnlyPercent: 20,
+        qualityOnly: 85,
+        qualityOnlyPercent: 10,
+        bothCertifications: 510,
+        bothCertificationsPercent: 60,
+        uncertified: 85,
+        uncertifiedPercent: 10
+      },
+      {
+        id: "B-2025-005",
+        name: "April Dark Roast",
+        status: "Rejected",
+        expiryDate: "-",
+        certificationDate: "-",
+        completedChecks: 6,
+        totalChecks: 8,
+        totalKg: 1000,
+        jarsUsed: 400,
+        originOnly: 100,
+        originOnlyPercent: 10,
+        qualityOnly: 50,
+        qualityOnlyPercent: 5,
+        bothCertifications: 150,
+        bothCertificationsPercent: 15,
+        uncertified: 700,
+        uncertifiedPercent: 70
+      }
+    ];
+
+    // Filter batches based on search term
+    const filteredBatches = allBatches.filter(batch => 
+      batch.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      batch.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      batch.status.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    // Determine which batches to display
+    const displayedBatches = showAllBatches ? filteredBatches : filteredBatches.slice(0, 3);
+
+    // Function to toggle batch expansion
+    const toggleBatchExpansion = (batchId) => {
+      if (expandedBatches.includes(batchId)) {
+        setExpandedBatches(expandedBatches.filter(id => id !== batchId));
+      } else {
+        setExpandedBatches([...expandedBatches, batchId]);
+      }
+    };
+
   // Calculate totals
-  const totalJars = data.jars.reduce((sum, jar) => sum + jar.count, 0);
+  const totalWeight = data.containers.reduce((sum, container) => sum + container.weight, 0);
   const totalLabels = data.labels.reduce((sum, label) => sum + label.count, 0);
   const totalBatches = data.batches.length;
 
@@ -108,12 +325,21 @@ export default function JarManagementDashboard() {
                 Dashboard
               </a>
             </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Package className="h-5 w-5 mr-3" />
-                Inventory
-              </a>
-            </li>
+           <li>
+  <a 
+    href="/inventory" 
+    onClick={(e) => {
+      e.preventDefault();
+      window.location.href = '/inventory';
+      // For a React app with routing, you could use:
+      // router.push('/inventory');
+    }} 
+    className="flex items-center px-4 py-3 hover:bg-gray-700"
+  >
+    <Package className="h-5 w-5 mr-3" />
+    Inventory
+  </a>
+</li>
             <li>
               <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
                 <Tag className="h-5 w-5 mr-3" />
@@ -193,23 +419,20 @@ export default function JarManagementDashboard() {
                 <p className="text-sm text-gray-500">Token Balance</p>
                 <p className="text-lg font-bold">{data.tokenStats.remainingTokens} / {data.tokenStats.totalTokens}</p>
               </div>
+              <button 
+                onClick={() => setShowBuyTokensModal(true)}
+                className="ml-3 p-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 flex items-center"
+              >
+                <PlusCircle className="h-4 w-4 mr-1" />
+                Buy
+              </button>
             </div>
             <button
-              onClick={refreshData}
-              disabled={loading}
-              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300"
+              onClick={() => setShowBatchModal(true)}
+              className="flex items-center px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 mr-3"
             >
-              {loading ? (
-                <span className="flex items-center">
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Refreshing...
-                </span>
-              ) : (
-                <span className="flex items-center">
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Refresh Data
-                </span>
-              )}
+              <Package className="w-4 h-4 mr-2" />
+              Create Batch
             </button>
           </div>
         </div>
@@ -217,6 +440,55 @@ export default function JarManagementDashboard() {
           Last updated: {lastUpdated}
         </p>
       </header>
+
+      {/* Create Batch Modal */}
+      {showBatchModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold mb-4">Create New Batch</h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Batch Number
+              </label>
+              <input
+                type="text"
+                name="batchNumber"
+                value={batchNumber || ''}
+                onChange={(e) => setBatchNumber(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                placeholder="Enter batch number"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowBatchModal(false);
+                  setBatchNumber('');
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createBatch}
+                disabled={!batchNumber}
+                className={`px-4 py-2 rounded-md text-white ${
+                  batchNumber ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed'
+                }`}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notification.show && (
+        <div className="fixed bottom-4 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-lg max-w-md z-50">
+          {notification.message}
+        </div>
+      )}
 
       {/* Token Wallet Section */}
       <div className="bg-white p-4 rounded-lg shadow text-black">
@@ -228,26 +500,26 @@ export default function JarManagementDashboard() {
               <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
                 <div className="flex items-center mb-1">
                   <div className="h-3 w-3 rounded-full bg-blue-500 mr-2"></div>
-                  <p className="text-sm font-medium">Origin Only</p>
+                  <p className="text-sm font-medium">Origin certified</p>
                 </div>
                 <p className="text-xl font-bold">{data.tokenStats.originOnly} tokens</p>
-                <p className="text-xs text-gray-500">Applied to {data.tokenStats.originOnly} jars</p>
+                <p className="text-xs text-gray-500">Applied to {data.tokenStats.originOnly} kg of honey</p>
               </div>
               <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
                 <div className="flex items-center mb-1">
                   <div className="h-3 w-3 rounded-full bg-green-500 mr-2"></div>
-                  <p className="text-sm font-medium">Quality Only</p>
+                  <p className="text-sm font-medium">Quality certified</p>
                 </div>
                 <p className="text-xl font-bold">{data.tokenStats.qualityOnly} tokens</p>
-                <p className="text-xs text-gray-500">Applied to {data.tokenStats.qualityOnly} jars</p>
+                <p className="text-xs text-gray-500">Applied to {data.tokenStats.qualityOnly} kg of honey</p>
               </div>
               <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
                 <div className="flex items-center mb-1">
                   <div className="h-3 w-3 rounded-full bg-purple-500 mr-2"></div>
-                  <p className="text-sm font-medium">Both Certifications</p>
+                  <p className="text-sm font-medium">Origin and Quality certified</p>
                 </div>
                 <p className="text-xl font-bold">{data.tokenStats.bothCertifications * 2} tokens</p>
-                <p className="text-xs text-gray-500">Applied to {data.tokenStats.bothCertifications} jars</p>
+                <p className="text-xs text-gray-500">Applied to {data.tokenStats.bothCertifications} kg of honey</p>
               </div>
               <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
                 <div className="flex items-center mb-1">
@@ -285,77 +557,328 @@ export default function JarManagementDashboard() {
         </div>
       </div>
 
-      {/* Jar Certification Status */}
-      <div className="bg-white p-4 rounded-lg shadow text-black">
-        <h2 className="text-lg font-semibold mb-4">Jar Certification Status</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <div className="text-center mb-2">
-              <h3 className="text-md font-semibold">Total Jars: {data.tokenStats.totalJars}</h3>
+      {/* Batch Certification Status Section */}
+<div className="bg-white p-4 rounded-lg shadow text-black">
+  <div className="flex justify-between items-center mb-4">
+    <h2 className="text-lg font-semibold">Batch Certification Status</h2>
+    <div className="flex items-center">
+      <div className="relative mr-2">
+        <div className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </div>
+        <input 
+          type="text" 
+          placeholder="Search batches..." 
+          value={searchTerm} 
+          onChange={(e) => setSearchTerm(e.target.value)} 
+          className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500 w-full" 
+        />
+      </div>
+      <button 
+        onClick={() => setShowAllBatches(!showAllBatches)} 
+        className="text-blue-600 hover:text-blue-800 text-sm"
+      >
+        {showAllBatches ? 'Show Less' : `Show All (${filteredBatches.length})`}
+      </button>
+    </div>
+  </div>
+
+  <div className="space-y-2">
+    {displayedBatches.length > 0 ? (
+      displayedBatches.map((batch) => (
+        <div key={batch.id} className="border rounded-lg bg-gray-50 overflow-hidden">
+          {/* Batch header */}
+          <div 
+            className="p-3 bg-gray-100 cursor-pointer flex justify-between items-center"
+            onClick={() => toggleBatchExpansion(batch.id)}
+          >
+            <div className="flex items-center">
+              <span className={`inline-block w-3 h-3 rounded-full mr-3 ${
+                batch.status === "Certified" ? "bg-green-500" :
+                batch.status === "Pending" ? "bg-yellow-500" :
+                batch.status === "In Progress" ? "bg-blue-500" :
+                batch.status === "Rejected" ? "bg-red-500" : 
+                "bg-gray-500"
+              }`}></span>
+              <span className="font-medium">{batch.name}</span>
             </div>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie
-                  data={jarStatusData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                  nameKey="name"
-                  label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
-                >
-                  {jarStatusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => `${value} jars`} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="flex items-center">
+              <span className="text-sm text-gray-600 mr-3">
+                {batch.status}
+              </span>
+              <svg 
+                className={`w-4 h-4 transform transition-transform ${expandedBatches.includes(batch.id) ? 'rotate-180' : ''}`} 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
           </div>
-          <div className="border rounded-lg p-4 bg-gray-50">
-            <h3 className="text-md font-semibold mb-3">Certification Progress</h3>
-            <div className="flex flex-wrap justify-between mb-4">
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-blue-500 mr-2"></div>
-                  <p className="text-sm font-medium">Origin Certified</p>
+
+          {/* Expanded content */}
+          {expandedBatches.includes(batch.id) && (
+            <div className="p-4 border-t">
+              {/* Batch metadata */}
+              <div className="flex justify-between mb-3">
+                <div>
+                  <p className="text-sm text-gray-600">Batch ID</p>
+                  <p className="font-medium">{batch.id}</p>
                 </div>
-                <p className="text-xl font-bold">{data.tokenStats.originOnly} jars</p>
-                <p className="text-xs text-gray-500">{((data.tokenStats.originOnly / data.tokenStats.totalJars) * 100).toFixed(1)}% of inventory</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-green-500 mr-2"></div>
-                  <p className="text-sm font-medium">Quality Certified</p>
+                <div>
+                  <p className="text-sm text-gray-600">Certification Date</p>
+                  <p className="font-medium">{batch.certificationDate || "-"}</p>
                 </div>
-                <p className="text-xl font-bold">{data.tokenStats.qualityOnly} jars</p>
-                <p className="text-xs text-gray-500">{((data.tokenStats.qualityOnly / data.tokenStats.totalJars) * 100).toFixed(1)}% of inventory</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-purple-500 mr-2"></div>
-                  <p className="text-sm font-medium">Fully Certified</p>
+                <div>
+                  <p className="text-sm text-gray-600">Expiry Date</p>
+                  <p className="font-medium">{batch.expiryDate || "-"}</p>
                 </div>
-                <p className="text-xl font-bold">{data.tokenStats.bothCertifications} jars</p>
-                <p className="text-xs text-gray-500">{((data.tokenStats.bothCertifications / data.tokenStats.totalJars) * 100).toFixed(1)}% of inventory</p>
               </div>
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-gray-400 mr-2"></div>
-                  <p className="text-sm font-medium">Uncertified</p>
+
+              {/* Progress bar */}
+              <div className="mt-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-sm text-gray-600">Certification Progress</span>
+                  <span className="text-sm font-medium">{batch.completedChecks}/{batch.totalChecks} Checks</span>
                 </div>
-                <p className="text-xl font-bold">{data.tokenStats.totalJars - data.tokenStats.originOnly - data.tokenStats.qualityOnly - data.tokenStats.bothCertifications} jars</p>
-                <p className="text-xs text-gray-500">{(((data.tokenStats.totalJars - data.tokenStats.originOnly - data.tokenStats.qualityOnly - data.tokenStats.bothCertifications) / data.tokenStats.totalJars) * 100).toFixed(1)}% of inventory</p>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className={`h-2 rounded-full ${
+                      batch.status === "Certified" ? "bg-green-500" :
+                      batch.status === "Rejected" ? "bg-red-500" : "bg-yellow-500"
+                    }`}
+                    style={{ width: `${(batch.completedChecks / batch.totalChecks) * 100}%` }}
+                  ></div>
+                </div>
               </div>
+
+              {/* Certification data & pie chart with arrow indicators */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                {/* Chart section with arrow indicators */}
+                <div>
+                  <div className="text-center mb-2">
+                    <h3 className="text-md font-semibold">Total Kilograms: {batch.totalKg || "1000"}</h3>
+                    <p className="text-xs text-gray-500">Jars used: {batch.jarsUsed || "400"}</p>
+                  </div>
+                  <div className="h-48 flex items-center justify-center">
+                    {/* SVG circle chart with arrow indicators */}
+                    <div className="relative w-40 h-40">
+                      <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
+                        {/* Background circle */}
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="transparent"
+                          stroke="#e5e7eb"
+                          strokeWidth="16"
+                        />
+                        
+                        {/* Origin Only - Blue segment */}
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="transparent"
+                          stroke="#3b82f6" 
+                          strokeWidth="16"
+                          strokeDasharray={`${(batch.originOnlyPercent || 25) * 2.51} 251`}
+                          strokeLinecap="butt"
+                        />
+                        
+                        {/* Quality Only - Green segment */}
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="transparent"
+                          stroke="#10b981"
+                          strokeWidth="16"
+                          strokeDasharray={`${(batch.qualityOnlyPercent || 10) * 2.51} 251`}
+                          strokeDashoffset={`${-(batch.originOnlyPercent || 25) * 2.51}`}
+                          strokeLinecap="butt"
+                        />
+                        
+                        {/* Fully Certified - Purple segment */}
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="transparent"
+                          stroke="#8b5cf6"
+                          strokeWidth="16"
+                          strokeDasharray={`${(batch.bothCertificationsPercent || 45) * 2.51} 251`}
+                          strokeDashoffset={`${-((batch.originOnlyPercent || 25) + (batch.qualityOnlyPercent || 10)) * 2.51}`}
+                          strokeLinecap="butt"
+                        />
+                        
+                        {/* Uncertified - Gray segment */}
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          fill="transparent"
+                          stroke="#9ca3af"
+                          strokeWidth="16"
+                          strokeDasharray={`${(batch.uncertifiedPercent || 20) * 2.51} 251`}
+                          strokeDashoffset={`${-((batch.originOnlyPercent || 25) + (batch.qualityOnlyPercent || 10) + (batch.bothCertificationsPercent || 45)) * 2.51}`}
+                          strokeLinecap="butt"
+                        />
+                      </svg>
+                      
+                      {/* Center text display */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-sm font-medium">{batch.totalKg} kg</span>
+                        <span className="text-xs text-gray-500">{batch.jarsUsed} jars</span>
+                      </div>
+                      
+                      {/* Arrow indicators with percentages */}
+                      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-2 bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                        <span>↓</span>
+                        <span className="ml-1">{batch.originOnlyPercent || 25}%</span>
+                      </div>
+                      
+                      <div className="absolute right-0 top-1/2 transform translate-x-2 -translate-y-1/2 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                        <span>←</span>
+                        <span className="ml-1">{batch.qualityOnlyPercent || 10}%</span>
+                      </div>
+                      
+                      <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-2 bg-purple-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                        <span>↑</span>
+                        <span className="ml-1">{batch.bothCertificationsPercent || 45}%</span>
+                      </div>
+                      
+                      <div className="absolute left-0 top-1/2 transform -translate-x-2 -translate-y-1/2 bg-gray-400 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                        <span>→</span>
+                        <span className="ml-1">{batch.uncertifiedPercent || 20}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Certification stats */}
+                <div className="border rounded-lg p-4 bg-gray-50">
+                  <h3 className="text-md font-semibold mb-3">Certification Progress</h3>
+                  <div className="flex flex-wrap justify-between mb-4">
+                    {[
+                      {
+                        color: "bg-blue-500",
+                        label: "Origin Certified",
+                        value: batch.originOnly || "250",
+                        percent: batch.originOnlyPercent || "25",
+                        jars: Math.round((batch.originOnly || 250) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
+                      },
+                      {
+                        color: "bg-green-500",
+                        label: "Quality Certified",
+                        value: batch.qualityOnly || "100",
+                        percent: batch.qualityOnlyPercent || "10",
+                        jars: Math.round((batch.qualityOnly || 100) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
+                      },
+                      {
+                        color: "bg-purple-500",
+                        label: "Fully Certified",
+                        value: batch.bothCertifications || "450",
+                        percent: batch.bothCertificationsPercent || "45",
+                        jars: Math.round((batch.bothCertifications || 450) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
+                      },
+                      {
+                        color: "bg-gray-400",
+                        label: "Uncertified",
+                        value: batch.uncertified || "200",
+                        percent: batch.uncertifiedPercent || "20",
+                        jars: Math.round((batch.uncertified || 200) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
+                      },
+                    ].map((item, index) => (
+                      <div key={index} className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
+                        <div className="flex items-center mb-1">
+                          <div className={`h-3 w-3 rounded-full ${item.color} mr-2`}></div>
+                          <p className="text-sm font-medium">{item.label}</p>
+                        </div>
+                        <p className="text-xl font-bold">{item.value} kg</p>
+                        <p className="text-xs text-gray-500">{item.jars} jars · {item.percent}% of batch</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer buttons */}
+              <div className="mt-4 flex justify-end">
+                <button className="px-3 py-1 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 mr-2">
+                  View Full Details
+                </button>
+                {batch.status === "Waiting Approval" && (
+                  <button className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700">
+                    Approve
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ))
+    ) : (
+      <div className="text-center py-8 text-gray-500">
+        No batches match your search criteria
+      </div>
+    )}
+  </div>
+
+  {/* Show more button */}
+  {filteredBatches.length > 3 && !showAllBatches && (
+    <div className="mt-3 text-center">
+      <button 
+        onClick={() => setShowAllBatches(true)}
+        className="text-yellow-600 hover:text-yellow-800 text-sm font-medium"
+      >
+        + Show {filteredBatches.length - 3} more batches
+      </button>
+    </div>
+  )}
+</div>
+      {/* Buy Tokens Modal */}
+      {showBuyTokensModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold mb-4">Buy More Tokens</h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Number of Tokens to Purchase
+              </label>
+              <input
+                type="number"
+                value={tokensToAdd}
+                onChange={(e) => setTokensToAdd(parseInt(e.target.value) || 0)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                min="1"
+              />
+            </div>
+            <div className="mb-4">
+              <p className="font-medium">Price: ${(tokensToAdd * 0.10).toFixed(2)} USD</p>
+              <p className="text-sm text-gray-500">($0.10 per token)</p>
+            </div>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowBuyTokensModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBuyTokens}
+                className="px-4 py-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600"
+              >
+                Purchase
+              </button>
             </div>
           </div>
         </div>
-      </div>
-
-      
+      )}
     </div>
-  );
+);
 }
