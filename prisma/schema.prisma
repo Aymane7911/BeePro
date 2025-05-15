@@ -31,3 +31,22 @@ model beeusers {
   
   @@map("beeusers")
 }
+
+model Batch {
+  id          Int       @id @default(autoincrement())
+  batchNumber String    @unique
+  createdAt   DateTime  @default(now())
+  apiaries    Apiary[]
+}
+
+model Apiary {
+  id         Int      @id @default(autoincrement())
+  name       String
+  number     String
+  hiveCount  Int
+  latitude   Float
+  longitude  Float
+
+  batchId    Int
+  batch      Batch    @relation(fields: [batchId], references: [id])
+}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle } from 'lucide-react';
 import { SearchIcon } from '@heroicons/react/outline';
 
@@ -310,6 +310,7 @@ export default function JarManagementDashboard() {
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [selectedCertification, setSelectedCertification] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [timeRange, setTimeRange] = useState('Monthly');
 
   return (
     <div className="flex flex-col space-y-6 p-6 min-h-screen bg-gradient-to-b from-yellow-200 to-white text-black">
@@ -560,6 +561,159 @@ export default function JarManagementDashboard() {
           </div>
         </div>
       </div>
+      {/* Certification Evolution Chart Section */}
+<div className="bg-white p-4 rounded-lg shadow text-black mb-6">
+  <div className="flex justify-between items-center mb-4">
+    <h2 className="text-lg font-semibold">Certification Overview</h2>
+    <div className="relative">
+      <select 
+        className="bg-white border border-gray-300 rounded-md px-3 py-1 pr-8 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+        value={timeRange}
+        onChange={(e) => setTimeRange(e.target.value)}
+      >
+        <option value="Monthly">Monthly</option>
+        <option value="Quarterly">Quarterly</option>
+        <option value="Yearly">Yearly</option>
+      </select>
+      <div className="absolute right-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2.5 4.5L6 8L9.5 4.5" stroke="#4B5563" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div className="h-64">
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart
+        data={filteredBatches.reduce((acc, batch) => {
+          // Extract month from certification date
+          const month = batch.certificationDate ? 
+            new Date(batch.certificationDate).toLocaleString('default', { month: 'short' }) : 'Unknown';
+          
+          // Find or create month entry
+          let monthEntry = acc.find(entry => entry.month === month);
+          if (!monthEntry) {
+            monthEntry = { 
+              month, 
+              originOnly: 0, 
+              qualityOnly: 0, 
+              bothCertifications: 0, 
+              uncertified: 0 
+            };
+            acc.push(monthEntry);
+          }
+          
+          // Add batch data to month entry
+          monthEntry.originOnly += Number(batch.originOnly || 0);
+          monthEntry.qualityOnly += Number(batch.qualityOnly || 0);
+          monthEntry.bothCertifications += Number(batch.bothCertifications || 0);
+          monthEntry.uncertified += Number(batch.uncertified || 0);
+          
+          return acc;
+        }, []).sort((a, b) => {
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          return months.indexOf(a.month) - months.indexOf(b.month);
+        })}
+        margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+        <XAxis 
+          dataKey="month" 
+          tick={{ fill: '#6B7280', fontSize: 12 }}
+          axisLine={{ stroke: '#E5E7EB' }}
+          tickLine={false}
+        />
+        <YAxis 
+          tick={{ fill: '#6B7280', fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <Tooltip
+          contentStyle={{ 
+            backgroundColor: 'white', 
+            borderRadius: '0.375rem', 
+            border: '1px solid #E5E7EB',
+            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+          }}
+          itemStyle={{ padding: '2px 0' }}
+          formatter={(value) => [`${value} kg`, null]}
+          labelFormatter={(label) => `${label}`}
+        />
+        <Legend 
+          verticalAlign="top" 
+          height={36}
+          iconType="circle"
+          iconSize={10}
+          wrapperStyle={{ paddingBottom: '10px' }}
+        />
+        <Line 
+          type="monotone" 
+          dataKey="originOnly" 
+          name="Origin Certified" 
+          stroke="#3B82F6" 
+          strokeWidth={3}
+          dot={false}
+          activeDot={{ r: 6 }}
+        />
+        <Line 
+          type="monotone" 
+          dataKey="qualityOnly" 
+          name="Quality Certified" 
+          stroke="#10B981" 
+          strokeWidth={3}
+          dot={false}
+          activeDot={{ r: 6 }}
+        />
+        <Line 
+          type="monotone" 
+          dataKey="bothCertifications" 
+          name="Fully Certified" 
+          stroke="#8B5CF6" 
+          strokeWidth={3}
+          dot={false}
+          activeDot={{ r: 6 }}
+        />
+        <Line 
+          type="monotone" 
+          dataKey="uncertified" 
+          name="Uncertified" 
+          stroke="#9CA3AF" 
+          strokeWidth={3}
+          dot={false}
+          activeDot={{ r: 6 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+
+  <div className="flex justify-between mt-4 border-t pt-4">
+    <div className="text-center">
+      <p className="text-gray-500">Origin Certified</p>
+      <p className="text-2xl font-bold">
+        {filteredBatches.reduce((total, batch) => total + Number(batch.originOnly || 0), 0)} kg
+      </p>
+    </div>
+    <div className="text-center">
+      <p className="text-gray-500">Quality Certified</p>
+      <p className="text-2xl font-bold">
+        {filteredBatches.reduce((total, batch) => total + Number(batch.qualityOnly || 0), 0)} kg
+      </p>
+    </div>
+    <div className="text-center">
+      <p className="text-gray-500">Fully Certified</p>
+      <p className="text-2xl font-bold">
+        {filteredBatches.reduce((total, batch) => total + Number(batch.bothCertifications || 0), 0)} kg
+      </p>
+    </div>
+    <div className="text-center">
+      <p className="text-gray-500">Uncertified</p>
+      <p className="text-2xl font-bold">
+        {filteredBatches.reduce((total, batch) => total + Number(batch.uncertified || 0), 0)} kg
+      </p>
+    </div>
+  </div>
+</div>
 
    {/* Batch Certification Status Section */}
 <div className="bg-white p-4 rounded-lg shadow text-black">
@@ -691,17 +845,17 @@ export default function JarManagementDashboard() {
           >
             <div className="flex items-center">
               <span className={`inline-block w-3 h-3 rounded-full mr-3 ${
-                batch.status === "Certified" ? "bg-green-500" :
-                batch.status === "Pending" ? "bg-yellow-500" :
-                batch.status === "In Progress" ? "bg-blue-500" :
-                batch.status === "Rejected" ? "bg-red-500" : 
-                "bg-gray-500"
+                batch.status === "Closed" || 
+                (batch.status === "Certified" || batch.status === "Rejected") && batch.completedChecks === batch.totalChecks 
+                  ? "bg-green-500" : "bg-yellow-500"
               }`}></span>
               <span className="font-medium">{batch.name}</span>
             </div>
             <div className="flex items-center">
               <span className="text-sm text-gray-600 mr-3">
-                {batch.status}
+                {batch.status === "Certified" || batch.status === "Rejected" || batch.status === "In Progress" ? 
+                  (batch.completedChecks === batch.totalChecks ? "Closed" : "Pending") : 
+                  batch.status}
               </span>
               <svg 
                 className={`w-4 h-4 transform transition-transform ${expandedBatches.includes(batch.id) ? 'rotate-180' : ''}`} 
@@ -742,8 +896,7 @@ export default function JarManagementDashboard() {
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className={`h-2 rounded-full ${
-                      batch.status === "Certified" ? "bg-green-500" :
-                      batch.status === "Rejected" ? "bg-red-500" : "bg-yellow-500"
+                      batch.completedChecks === batch.totalChecks ? "bg-green-500" : "bg-yellow-500"
                     }`}
                     style={{ width: `${(batch.completedChecks / batch.totalChecks) * 100}%` }}
                   ></div>
@@ -924,7 +1077,7 @@ export default function JarManagementDashboard() {
                 <button className="px-3 py-1 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 mr-2">
                   View Full Details
                 </button>
-                {batch.status === "Waiting Approval" && (
+                {batch.status === "Pending" && (
                   <button className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700">
                     Approve
                   </button>
