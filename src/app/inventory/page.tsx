@@ -298,7 +298,7 @@ export default function InventoryPage() {
               <div>
                 <h1 className="text-2xl font-bold text-gray-800">HoneyCertify</h1>
                 <div className="flex items-center">
-                  <a href="/" className="flex items-center text-sm text-blue-600 hover:underline">
+                  <a href="/dashboard" className="flex items-center text-sm text-blue-600 hover:underline">
                     <ArrowLeft className="h-3 w-3 mr-1" />
                     Back to Dashboard
                   </a>

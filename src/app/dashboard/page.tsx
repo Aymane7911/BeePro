@@ -307,6 +307,10 @@ export default function JarManagementDashboard() {
   const totalLabels = data.labels.reduce((sum, label) => sum + label.count, 0);
   const totalBatches = data.batches.length;
 
+  const [showInventoryModal, setShowInventoryModal] = useState(false);
+  const [selectedCertification, setSelectedCertification] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
+
   return (
     <div className="flex flex-col space-y-6 p-6 min-h-screen bg-gradient-to-b from-yellow-200 to-white text-black">
       {/* Sidebar */}
@@ -557,7 +561,7 @@ export default function JarManagementDashboard() {
         </div>
       </div>
 
-      {/* Batch Certification Status Section */}
+   {/* Batch Certification Status Section */}
 <div className="bg-white p-4 rounded-lg shadow text-black">
   <div className="flex justify-between items-center mb-4">
     <h2 className="text-lg font-semibold">Batch Certification Status</h2>
@@ -585,6 +589,96 @@ export default function JarManagementDashboard() {
       </button>
     </div>
   </div>
+
+  {/* Inventory Detail Modal */}
+  {selectedItem && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30" onClick={() => setSelectedItem(null)}>
+      <div className="bg-white rounded-lg p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold">Inventory Details</h3>
+          <button 
+            onClick={() => setSelectedItem(null)}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        
+        <div className="bg-gray-50 p-4 rounded-lg mb-4 border">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-sm text-gray-500">Batch Name</p>
+              <p className="font-medium">{selectedItem.batchName}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Category</p>
+              <p className="font-medium">{selectedItem.category}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Weight</p>
+              <p className="font-medium">{selectedItem.weight} kg</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Jars</p>
+              <p className="font-medium">{selectedItem.jars}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Container Type</p>
+              <p className="font-medium">{selectedItem.containerType || "Glass"}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Label Type</p>
+              <p className="font-medium">{selectedItem.labelType || "Premium"}</p>
+            </div>
+          </div>
+          
+          {/* Additional inventory details */}
+          <div className="mt-3 pt-3 border-t">
+            <div className="flex justify-between mb-2">
+              <span className="text-sm text-gray-600">Stock Level</span>
+              <span className="text-sm font-medium">
+                {selectedItem.stockLevel || "In Stock"}
+              </span>
+            </div>
+            <div className="flex justify-between mb-2">
+              <span className="text-sm text-gray-600">Location</span>
+              <span className="text-sm font-medium">
+                {selectedItem.location || "Warehouse A"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-600">Last Updated</span>
+              <span className="text-sm font-medium">
+                {selectedItem.lastUpdated || new Date().toLocaleDateString()}
+              </span>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={() => setSelectedItem(null)}
+            className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-100 text-sm"
+          >
+            Close
+          </button>
+          <button
+            onClick={() => {
+              // Handle view full inventory details logic here
+              setSelectedItem(null);
+              // Can redirect to inventory page with this item selected
+            }}
+            className="px-3 py-1 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 text-sm"
+          >
+            View in Inventory
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
 
   <div className="space-y-2">
     {displayedBatches.length > 0 ? (
@@ -794,7 +888,25 @@ export default function JarManagementDashboard() {
                         jars: Math.round((batch.uncertified || 200) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
                       },
                     ].map((item, index) => (
-                      <div key={index} className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
+                      <div 
+                        key={index} 
+                        className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12 cursor-pointer transform transition-transform hover:scale-105 hover:shadow-md"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedItem({
+                            batchName: batch.name,
+                            batchId: batch.id,
+                            category: item.label,
+                            weight: item.value,
+                            jars: item.jars,
+                            containerType: batch.containerType || "Glass",
+                            labelType: batch.labelType || "Premium",
+                            stockLevel: "In Stock",
+                            location: item.label === "Uncertified" ? "Pending Area" : "Certified Storage",
+                            lastUpdated: new Date().toLocaleDateString()
+                          });
+                        }}
+                      >
                         <div className="flex items-center mb-1">
                           <div className={`h-3 w-3 rounded-full ${item.color} mr-2`}></div>
                           <p className="text-sm font-medium">{item.label}</p>
@@ -841,6 +953,7 @@ export default function JarManagementDashboard() {
     </div>
   )}
 </div>
+
       {/* Buy Tokens Modal */}
       {showBuyTokensModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
