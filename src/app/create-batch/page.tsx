@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Menu, X, Search, ChevronDown, ChevronUp, Printer, PlusCircle, Check, AlertCircle, MapPin, Package, RefreshCw, Filter, ArrowLeft } from 'lucide-react';
+import { Menu, X, Search, ChevronDown, ChevronUp, Printer, PlusCircle, Check, AlertCircle, MapPin, Package, RefreshCw, Filter, ArrowLeft, Upload } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 export default function BatchesPage() {
@@ -16,8 +16,19 @@ export default function BatchesPage() {
   const [showPrintNotification, setShowPrintNotification] = useState(false);
   const [showCompleteForm, setShowCompleteForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
-  const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleString());
+  const [lastUpdated, setLastUpdated] = useState('--');
   const [expandedBatch, setExpandedBatch] = useState(null);
+  const [showProfileNotification, setShowProfileNotification] = useState(false);
+  const [showProfileForm, setShowProfileForm] = useState(false);
+  const [profileData, setProfileData] = useState({
+    passportId: '',
+    passportScan: null
+  });
+ useEffect(() => {
+  // Format the current date for display - only runs on client after hydration
+  const now = new Date();
+  setLastUpdated(now.toLocaleDateString() + ' ' + now.toLocaleTimeString());
+}, []);
   const [formData, setFormData] = useState({
     apiaries: [
       {
@@ -163,7 +174,29 @@ export default function BatchesPage() {
       apiaries: []
     }
   ]);
+  // Handle profile form changes
+  const handleProfileChange = (field, value) => {
+    setProfileData({
+      ...profileData,
+      [field]: value
+    });
+  };
 
+  // Handle file upload
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      handleProfileChange('passportScan', file);
+    }
+  };
+
+  // Handle profile completion form submission
+  const handleProfileSubmit = (e) => {
+    e.preventDefault();
+    // In a real app, you would save the profile data to a database
+    setShowProfileForm(false);
+    alert('Profile information updated successfully!');
+  };
   // Toggle sidebar
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -224,6 +257,7 @@ export default function BatchesPage() {
     setShowPrintNotification(false);
     setSelectedBatches([]);
     setSelectAll(false);
+    setShowProfileNotification(true);
     
     // Show success message
     alert('Batches successfully completed and associated with apiaries.');
@@ -262,20 +296,22 @@ export default function BatchesPage() {
 
   // Handle apiary form field changes
   const handleApiaryChange = (index, field, value) => {
-    const updatedApiaries = [...formData.apiaries];
-    updatedApiaries[index] = {
-      ...updatedApiaries[index],
-      [field]: field === 'hiveCount' || field === 'latitude' || field === 'longitude' || field === 'kilosCollected' 
-        ? parseFloat(value) 
-        : value
-    };
-    
-    setFormData({
-      ...formData,
-      apiaries: updatedApiaries
-    });
-  };
-
+  const newApiaries = [...formData.apiaries];
+  
+  // For numeric fields, handle empty values properly
+  if (['hiveCount', 'kilosCollected', 'latitude', 'longitude'].includes(field)) {
+    // Convert to number if value exists, otherwise use 0 or empty string
+    // This prevents NaN values
+    newApiaries[index][field] = value === '' ? (field === 'kilosCollected' || field === 'hiveCount' ? 0 : '') : Number(value);
+  } else {
+    newApiaries[index][field] = value;
+  }
+  
+  setFormData({
+    ...formData,
+    apiaries: newApiaries
+  });
+};
   // Filter and sort batches
   const filteredBatches = batches
     .filter(batch => {
@@ -732,7 +768,7 @@ export default function BatchesPage() {
           </div>
         </div>
       )}
-
+      
       {/* Complete batch form modal */}
       {showCompleteForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
@@ -933,7 +969,129 @@ export default function BatchesPage() {
           </div>
         </div>
       )}
+       {/* Profile completion notification modal */}
+      {showProfileNotification && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center mb-4">
+              <div className="bg-blue-100 p-2 rounded-full mr-3">
+                <AlertCircle className="h-6 w-6 text-blue-600" />
+              </div>
+              <h3 className="text-lg font-bold">Profile Incomplete</h3>
+            </div>
+            <p className="mb-4 text-gray-600">
+              To ensure compliance with certification standards, please complete your profile by providing your passport ID and a scan of your passport. This information is required for audit purposes.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowProfileNotification(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100"
+              >
+                Later
+              </button>
+              <button
+                onClick={() => {
+                  setShowProfileNotification(false);
+                  setShowProfileForm(true);
+                }}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+              >
+                Complete Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Profile completion form modal */}
+      {showProfileForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold">Complete Your Profile</h3>
+              <button 
+                onClick={() => setShowProfileForm(false)}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleProfileSubmit}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Passport ID
+                </label>
+                <input
+                  type="text"
+                  value={profileData.passportId}
+                  onChange={(e) => handleProfileChange('passportId', e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter your passport ID"
+                />
+              </div>
+              
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Passport Scan
+                </label>
+                <div className="mt-1 flex items-center">
+                  {profileData.passportScan ? (
+                    <div className="bg-gray-100 p-3 rounded-md w-full flex justify-between items-center">
+                      <span className="text-sm text-gray-700">{profileData.passportScan.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleProfileChange('passportScan', null)}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full flex flex-col items-center px-4 py-6 bg-white rounded-md shadow-sm border border-gray-300 border-dashed cursor-pointer hover:bg-gray-50">
+                      <Upload className="h-8 w-8 text-gray-400" />
+                      <span className="mt-2 text-sm text-gray-600">
+                        Upload a scan of your passport
+                      </span>
+                      <span className="mt-1 text-xs text-gray-500">
+                        PNG, JPG or PDF up to 10MB
+                      </span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".jpg,.jpeg,.png,.pdf"
+                        onChange={handleFileUpload}
+                        required
+                      />
+                    </label>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Your passport information is securely stored and only used for certification verification purposes.
+                </p>
+              </div>
+              
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileForm(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center"
+                >
+                  <Check className="h-4 w-4 mr-2" />
+                  Save Profile
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {/* Statistics summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-lg shadow">

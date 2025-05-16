@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle } from 'lucide-react';
 import { SearchIcon } from '@heroicons/react/outline';
+import { useRouter } from 'next/navigation';
 
 
 // Mock data - in a real implementation, this would come from your backend microservices
@@ -311,6 +312,8 @@ export default function JarManagementDashboard() {
   const [selectedCertification, setSelectedCertification] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [timeRange, setTimeRange] = useState('Monthly');
+  const router = useRouter();
+
 
   return (
     <div className="flex flex-col space-y-6 p-6 min-h-screen bg-gradient-to-b from-yellow-200 to-white text-black">
@@ -335,9 +338,9 @@ export default function JarManagementDashboard() {
     href="/inventory" 
     onClick={(e) => {
       e.preventDefault();
-      window.location.href = '/inventory';
+      
       // For a React app with routing, you could use:
-      // router.push('/inventory');
+       router.push('/inventory');
     }} 
     className="flex items-center px-4 py-3 hover:bg-gray-700"
   >
@@ -346,13 +349,13 @@ export default function JarManagementDashboard() {
   </a>
 </li>
             <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Tag className="h-5 w-5 mr-3" />
-                Labels
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+              <a href="/create-batch" 
+              onClick={(e) => {
+          e.preventDefault();
+          // For a React app with routing, you could use:
+          router.push('/create-batch');
+        }} 
+              className="flex items-center px-4 py-3 hover:bg-gray-700">
                 <Layers className="h-5 w-5 mr-3" />
                 Batches
               </a>
@@ -372,7 +375,7 @@ export default function JarManagementDashboard() {
             <li>
               <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
                 <Users className="h-5 w-5 mr-3" />
-                Users
+                Profile
               </a>
             </li>
             <li>
