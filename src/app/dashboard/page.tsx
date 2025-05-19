@@ -5,57 +5,26 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle } from 'lucide-react';
 import { SearchIcon } from '@heroicons/react/outline';
 import { useRouter } from 'next/navigation';
+import { Sidebar } from './Sidebar';
+import { Backdrop } from './Backdrop';
+import { Header } from './Header';
+import { CreateBatchModal } from './CreateBatchModal';
 
 
 // Mock data - in a real implementation, this would come from your backend microservices
 const initialData = {
-  containers: [
-    { name: 'Glass Containers', weight: 245, color: '#4299e1' },
-    { name: 'Plastic Containers', weight: 157, color: '#38b2ac' },
-    { name: 'Metal Containers', weight: 89, color: '#805ad5' }
-  ],
-  labels: [
-    { name: 'Standard', count: 189, color: '#f56565' },
-    { name: 'Premium', count: 145, color: '#ed8936' },
-    { name: 'Custom', count: 157, color: '#ecc94b' }
-  ],
-  batches: [
-    { id: 'B1001', containerType: 'Glass', labelType: 'Premium', weightKg: 50, date: '2025-05-10' },
-    { id: 'B1002', containerType: 'Plastic', labelType: 'Standard', weightKg: 75, date: '2025-05-11' },
-    { id: 'B1003', containerType: 'Metal', labelType: 'Custom', weightKg: 30, date: '2025-05-12' },
-    { id: 'B1004', containerType: 'Glass', labelType: 'Standard', weightKg: 65, date: '2025-05-13' }
-  ],
-  tokenStats: {
-    totalTokens: 1000,
-    originOnly: 100,
-    qualityOnly: 100,
-    bothCertifications: 100,
-    remainingTokens: 700,
-    totalKg: 2000
-  },
-  certifiedHoneyWeight: {
-    originOnly: 250, // weight in kg
-    qualityOnly: 450, // weight in kg
-    bothCertifications: 150, // weight in kg
-    uncertified: 1150 // weight in kg
-  }
+  containers: [],
+  labels: [],
+  batches: [],
+  tokenStats: {},
+  certifiedHoneyWeight: {}
 };
 
 // Token certification distribution data
-const tokenDistributionData = [
-  { name: 'Origin Only', value: 100, color: '#3182CE' },
-  { name: 'Quality Only', value: 100, color: '#38A169' },
-  { name: 'Both Certifications', value: 100, color: '#805AD5' },
-  { name: 'Remaining Tokens', value: 700, color: '#CBD5E0' }
-];
+const tokenDistributionData = [];
 
 // Honey certification status data
-const honeyStatusData = [
-  { name: 'Origin Only', value: 250, color: '#3182CE' },
-  { name: 'Quality Only', value: 450, color: '#38A169' },
-  { name: 'Both Certifications', value: 150, color: '#805AD5' },
-  { name: 'No Certification', value: 1150, color: '#CBD5E0' }
-];
+const honeyStatusData = [];
 
 // A microservice dashboard for jar inventory management
 export default function JarManagementDashboard() {
@@ -79,6 +48,94 @@ export default function JarManagementDashboard() {
   });
   const [batchNumber, setBatchNumber] = useState('');
   const [notification, setNotification] = useState({ show: false, message: '' });
+  const [batchName, setBatchName] = useState(''); // Added batch name field
+
+  useEffect(() => {
+  // Function to fetch data from API
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/batches');
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to fetch data');
+      }
+      
+      const data = await response.json();
+      
+      // Set token distribution data for the chart
+      const newTokenDistributionData = [
+        { name: 'Origin Certified', value: data.tokenStats.originOnly, color: '#3B82F6' },
+        { name: 'Quality Certified', value: data.tokenStats.qualityOnly, color: '#10B981' },
+        { name: 'Fully Certified', value: data.tokenStats.bothCertifications * 2, color: '#8B5CF6' },
+        { name: 'Remaining', value: data.tokenStats.remainingTokens, color: '#9CA3AF' },
+      ];
+      
+      // Calculate percentages for honey status chart
+      const totalHoney = 
+        data.certifiedHoneyWeight.originOnly + 
+        data.certifiedHoneyWeight.qualityOnly + 
+        data.certifiedHoneyWeight.bothCertifications + 
+        data.batches.reduce((sum, batch) => sum + batch.uncertified, 0);
+      
+      const newHoneyStatusData = [
+        { 
+          name: 'Origin Certified', 
+          value: data.certifiedHoneyWeight.originOnly,
+          percentage: totalHoney > 0 ? Math.round((data.certifiedHoneyWeight.originOnly / totalHoney) * 100) : 0,
+          color: '#3B82F6' 
+        },
+        { 
+          name: 'Quality Certified', 
+          value: data.certifiedHoneyWeight.qualityOnly,
+          percentage: totalHoney > 0 ? Math.round((data.certifiedHoneyWeight.qualityOnly / totalHoney) * 100) : 0,
+          color: '#10B981' 
+        },
+        { 
+          name: 'Fully Certified', 
+          value: data.certifiedHoneyWeight.bothCertifications,
+          percentage: totalHoney > 0 ? Math.round((data.certifiedHoneyWeight.bothCertifications / totalHoney) * 100) : 0,
+          color: '#8B5CF6' 
+        },
+        { 
+          name: 'Uncertified', 
+          value: data.batches.reduce((sum, batch) => sum + batch.uncertified, 0),
+          percentage: totalHoney > 0 ? 
+            Math.round((data.batches.reduce((sum, batch) => sum + batch.uncertified, 0) / totalHoney) * 100) : 0,
+          color: '#9CA3AF' 
+        },
+      ];
+      
+      // Update state with fetched data
+      setData(data);
+      setTokenDistributionData(newTokenDistributionData);
+      setHoneyStatusData(newHoneyStatusData);
+      setLastUpdated(new Date().toLocaleString());
+      
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      // Show error notification
+      setNotification({
+        show: true,
+        message: `Error: ${error.message}`
+      });
+      
+      setTimeout(() => {
+        setNotification({ show: false, message: '' });
+      }, 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Fetch data on component mount
+  fetchData();
+  
+  // Set up a refresh interval (optional)
+  // const intervalId = setInterval(fetchData, 60000); // Refresh every minute
+  // return () => clearInterval(intervalId); // Clean up on unmount
+}, []); // 
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -145,144 +202,71 @@ export default function JarManagementDashboard() {
     setShowBuyTokensModal(false);
   };
 
-  const createBatch = () => {
-  // Generate strong batch number with timestamp
-  const timestamp = new Date().getTime();
-  const strongBatchNumber = `${batchNumber}-${timestamp}`;
-  
-  // In a real app, you would send this data to your backend
-  const newBatch = {
-    id: strongBatchNumber,
-    containerType: batchFormData.containerType,
-    labelType: batchFormData.labelType,
-    weightKg: parseInt(batchFormData.weightKg, 10),
-    date: new Date().toISOString().split('T')[0]
-  };
+  const createBatch = async () => {
+  setLoading(true);
 
-  setData({
-    ...data,
-    batches: [newBatch, ...data.batches],
-    certifiedHoneyWeight: {
-      ...batchFormData.weights
+  try {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      throw new Error("No token found. Please log in again.");
     }
-  });
 
-  // Show notification with new batch number
-  setNotification({
-    show: true,
-    message: `Batch created successfully! Your batch number is: ${strongBatchNumber}`
-  });
-  
-  // Hide notification after 5 seconds
-  setTimeout(() => {
-    setNotification({ show: false, message: '' });
-  }, 5000);
+    const formData = {
+      batchNumber: batchNumber,
+      batchName: batchName || '',
+    };
 
-  // Reset and close modal
-  setBatchNumber('');
-  setShowBatchModal(false);
+    const response = await fetch('/api/create-batch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`, // ✅ fixed here
+      },
+      body: JSON.stringify(formData),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.message || 'Failed to create batch');
+    }
+
+    setData({
+      ...data,
+      batches: [result.batch, ...data.batches],
+      tokenStats: data.tokenStats,
+    });
+
+    setNotification({
+      show: true,
+      message: `Batch created successfully! Your batch number is: ${result.batchNumber}`,
+    });
+
+    setTimeout(() => {
+      setNotification({ show: false, message: '' });
+    }, 5000);
+
+    setBatchNumber('');
+    setShowBatchModal(false);
+  } catch (error) {
+    console.error('Error creating batch:', error);
+    setNotification({
+      show: true,
+      message: `Error: ${error.message}`,
+    });
+
+    setTimeout(() => {
+      setNotification({ show: false, message: '' });
+    }, 5000);
+  } finally {
+    setLoading(false);
+  }
 };
-    const [searchTerm, setSearchTerm] = useState("");
-    const [showAllBatches, setShowAllBatches] = useState(false);
-    const [expandedBatches, setExpandedBatches] = useState([]);
+
+
+const [showAllBatches, setShowAllBatches] = useState(false);
     // Sample batch data
-    const allBatches = [
-      {
-        id: "B-2025-001",
-        name: "January Organic Coffee",
-        status: "Certified",
-        expiryDate: "2025-12-31",
-        certificationDate: "2025-01-15",
-        completedChecks: 8,
-        totalChecks: 8,
-        totalKg: 1250,
-        jarsUsed: 500,
-        originOnly: 250,
-        originOnlyPercent: 20,
-        qualityOnly: 125,
-        qualityOnlyPercent: 10,
-        bothCertifications: 750,
-        bothCertificationsPercent: 60,
-        uncertified: 125,
-        uncertifiedPercent: 10
-      },
-      {
-        id: "B-2025-002",
-        name: "February Robusta Blend",
-        status: "Pending",
-        expiryDate: "-",
-        certificationDate: "-",
-        completedChecks: 5,
-        totalChecks: 8,
-        totalKg: 980,
-        jarsUsed: 392,
-        originOnly: 300,
-        originOnlyPercent: 30.6,
-        qualityOnly: 150,
-        qualityOnlyPercent: 15.3,
-        bothCertifications: 180,
-        bothCertificationsPercent: 18.4,
-        uncertified: 350,
-        uncertifiedPercent: 35.7
-      },
-      {
-        id: "B-2025-003",
-        name: "March Arabica Premium",
-        status: "In Progress",
-        expiryDate: "-",
-        certificationDate: "-",
-        completedChecks: 3,
-        totalChecks: 8,
-        totalKg: 1500,
-        jarsUsed: 600,
-        originOnly: 450,
-        originOnlyPercent: 30,
-        qualityOnly: 225,
-        qualityOnlyPercent: 15,
-        bothCertifications: 225,
-        bothCertificationsPercent: 15,
-        uncertified: 600,
-        uncertifiedPercent: 40
-      },
-      {
-        id: "B-2025-004",
-        name: "Q1 Specialty Blend",
-        status: "Certified",
-        expiryDate: "2025-12-15",
-        certificationDate: "2025-03-20",
-        completedChecks: 8,
-        totalChecks: 8,
-        totalKg: 850,
-        jarsUsed: 340,
-        originOnly: 170,
-        originOnlyPercent: 20,
-        qualityOnly: 85,
-        qualityOnlyPercent: 10,
-        bothCertifications: 510,
-        bothCertificationsPercent: 60,
-        uncertified: 85,
-        uncertifiedPercent: 10
-      },
-      {
-        id: "B-2025-005",
-        name: "April Dark Roast",
-        status: "Rejected",
-        expiryDate: "-",
-        certificationDate: "-",
-        completedChecks: 6,
-        totalChecks: 8,
-        totalKg: 1000,
-        jarsUsed: 400,
-        originOnly: 100,
-        originOnlyPercent: 10,
-        qualityOnly: 50,
-        qualityOnlyPercent: 5,
-        bothCertifications: 150,
-        bothCertificationsPercent: 15,
-        uncertified: 700,
-        uncertifiedPercent: 70
-      }
-    ];
+    const allBatches = [];
 
     // Filter batches based on search term
     const filteredBatches = allBatches.filter(batch => 
@@ -313,6 +297,8 @@ export default function JarManagementDashboard() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const router = useRouter();
+  const [searchTerm, setSearchTerm] = useState('');
+  
 
 
   return (
@@ -328,32 +314,17 @@ export default function JarManagementDashboard() {
         <nav className="mt-8">
           <ul className="space-y-2">
             <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+              <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
                 <Home className="h-5 w-5 mr-3" />
                 Dashboard
               </a>
             </li>
-           <li>
-  <a 
-    href="/inventory" 
-    onClick={(e) => {
-      e.preventDefault();
-      
-      // For a React app with routing, you could use:
-       router.push('/inventory');
-    }} 
-    className="flex items-center px-4 py-3 hover:bg-gray-700"
-  >
-    <Package className="h-5 w-5 mr-3" />
-    Inventory
-  </a>
-</li>
             <li>
-              <a href="/create-batch" 
+              <a href="/batches" 
               onClick={(e) => {
           e.preventDefault();
           // For a React app with routing, you could use:
-          router.push('/create-batch');
+          router.push('/batches');
         }} 
               className="flex items-center px-4 py-3 hover:bg-gray-700">
                 <Layers className="h-5 w-5 mr-3" />
@@ -449,6 +420,18 @@ export default function JarManagementDashboard() {
               <Package className="w-4 h-4 mr-2" />
               Premium
             </button>
+            <button
+               onClick={() => {
+               // Clear user session/token here
+               localStorage.removeItem('token');  // or your auth token key
+               // Redirect to login or homepage
+               router.push('/login');
+  }}
+  className="flex items-center px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 mr-3"
+>
+  <Package className="w-4 h-4 mr-2" />
+  Logout
+</button>
           </div>
         </div>
         <p className="text-gray-500 text-sm mt-1">
@@ -461,6 +444,7 @@ export default function JarManagementDashboard() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <h3 className="text-xl font-bold mb-4">Create New Batch</h3>
+
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Batch Number
@@ -475,6 +459,23 @@ export default function JarManagementDashboard() {
                 autoFocus
               />
             </div>
+
+            {/* Batch Name */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Batch Name
+        </label>
+        <input
+          type="text"
+          name="batchName"
+          value={batchName || ''}
+          onChange={(e) => setBatchName(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+          placeholder="Enter batch name (optional)"
+        />
+        <p className="text-xs text-gray-500 mt-1">If left empty, will default to "Batch {batchNumber}"</p>
+      </div>
+            
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => {

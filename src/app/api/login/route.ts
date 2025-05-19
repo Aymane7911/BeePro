@@ -7,38 +7,41 @@ const pool = new Pool({
 });
 
 export async function POST(request: Request) {
-  const { email, password } = await request.json();
-
-  console.log('Login API called with email:', email); // Log the request data
-
   try {
-    // Query the database for the user
-    const result = await pool.query(
-      'SELECT * FROM beeusers WHERE email = $1',
-      [email]
-    );
+    const body = await request.json();
+    console.log('[Login API] Request body:', body);
 
-    console.log('Database query result:', result.rowCount); // Log the number of rows returned
+    const { email, password } = body;
+
+    if (!email || !password) {
+      console.log('[Login API] Missing email or password');
+      return NextResponse.json({ message: 'Email and password are required' }, { status: 400 });
+    }
+
+    console.log('[Login API] Querying database for user:', email);
+    const result = await pool.query('SELECT * FROM beeusers WHERE email = $1', [email]);
+    console.log('[Login API] DB query completed, rows:', result.rowCount);
 
     if (result.rowCount === 0) {
-      console.log('User not found for email:', email);
+      console.log('[Login API] User not found for email:', email);
       return NextResponse.json({ message: 'User not found' }, { status: 404 });
     }
 
     const user = result.rows[0];
-    console.log('User found:', user);
+    console.log('[Login API] User record:', user);
 
     if (!user.is_confirmed) {
-      console.log('Email not confirmed for user:', email);
+      console.log('[Login API] Email not confirmed for user:', email);
       return NextResponse.json({ message: 'Email not confirmed yet' }, { status: 403 });
     }
 
+    // You might want to hash password compare here instead of plain equality
     if (user.password !== password) {
-      console.log('Invalid password attempt for user:', email);
+      console.log('[Login API] Password mismatch for user:', email);
       return NextResponse.json({ message: 'Invalid password' }, { status: 401 });
     }
 
-    // Generate JWT token (no isProfileComplete flag)
+    console.log('[Login API] Password valid, generating JWT token');
     const token = jwt.sign(
       {
         userId: user.id,
@@ -48,27 +51,32 @@ export async function POST(request: Request) {
       { expiresIn: '1h' }
     );
 
-    console.log('JWT token generated for user:', user.email);
+    console.log('[Login API] JWT token generated:', token);
 
-    const response = NextResponse.json({ message: 'Login successful', token });
+    const redirectUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/home`;
+    console.log('[Login API] Redirect URL:', redirectUrl);
 
-    // Set secure HTTP-only cookie for the token
+    const response = NextResponse.json(
+      {
+        message: 'Login successful',
+        token,
+        redirectUrl,
+      },
+      { status: 200 }
+    );
+
     response.cookies.set('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60, // 1 hour
+      maxAge: 60 * 60,
       path: '/',
     });
 
-    // Always redirect to dashboard
-    const redirectUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/home`;
-    console.log('Redirect URL:', redirectUrl);
-
-    return NextResponse.json({ message: 'Login successful', token, redirectUrl });
-
+    console.log('[Login API] Returning response with HTTP-only cookie set');
+    return response;
   } catch (error: any) {
-    console.error('Login error:', error.message, error.stack);
+    console.error('[Login API] Unexpected error:', error.message, error.stack);
     return NextResponse.json({ message: 'Server error' }, { status: 500 });
   }
 }

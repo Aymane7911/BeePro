@@ -28,25 +28,63 @@ model beeusers {
   phoneConfirmed    String?  @map("phone_confirmed")
   isProfileComplete Boolean  @default(false)
 
-  
+  batches           Batch[]
+  tokenStats        TokenStats?
+
   @@map("beeusers")
 }
 
 model Batch {
-  id          Int       @id @default(autoincrement())
-  batchNumber String    @unique
-  createdAt   DateTime  @default(now())
-  apiaries    Apiary[]
+  id                        String   @id @default(uuid())
+  batchNumber               String   @unique
+  batchName                 String
+  status                    String   @default("Pending")
+  containerType             String   @default("Glass")
+  labelType                 String   @default("Standard")
+  weightKg                  Float    @default(0)
+  jarsUsed                  Int      @default(0)
+  originOnly                Float    @default(0)
+  qualityOnly               Float    @default(0)
+  bothCertifications        Float    @default(0)
+  uncertified               Float    @default(0)
+  originOnlyPercent         Int      @default(0)
+  qualityOnlyPercent        Int      @default(0)
+  bothCertificationsPercent Int      @default(0)
+  uncertifiedPercent        Int      @default(0)
+  completedChecks           Int      @default(0)
+  totalChecks               Int      @default(4)
+  certificationDate         String?
+  expiryDate                String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  userId                    Int
+
+  user                      beeusers @relation(fields: [userId], references: [id])
+  apiaries                  Apiary[]
+}
+
+model TokenStats {
+  id                 String   @id @default(uuid())
+  userId             Int      @unique
+  totalTokens        Int      @default(0)
+  remainingTokens    Int      @default(0)
+  originOnly         Float    @default(0)
+  qualityOnly        Float    @default(0)
+  bothCertifications Float    @default(0)
+
+  beeusers           beeusers @relation(fields: [userId], references: [id])
 }
 
 model Apiary {
-  id         Int      @id @default(autoincrement())
+  id         Int     @id @default(autoincrement())
   name       String
   number     String
   hiveCount  Int
   latitude   Float
   longitude  Float
+  kilosCollected  Float  @default(0)
 
-  batchId    Int
-  batch      Batch    @relation(fields: [batchId], references: [id])
+  batchId    String
+  batch      Batch   @relation(fields: [batchId], references: [id])
 }
+

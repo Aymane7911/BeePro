@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { getUserIdFromToken } from '@/app/api/lib/auth';
+import { getUserIdFromToken } from '@/lib/auth';
 import { writeFile } from 'fs/promises';
 import path from 'path';
 import jwt from 'jsonwebtoken';
