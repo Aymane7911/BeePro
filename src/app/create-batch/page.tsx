@@ -364,7 +364,7 @@ export default function BatchesPage() {
         <nav className="mt-8">
           <ul className="space-y-2">
             <li>
-              <a href="/" className="flex items-center px-4 py-3 hover:bg-gray-700">
+              <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
                 <ArrowLeft className="h-5 w-5 mr-3" />
                 Back to Dashboard
               </a>

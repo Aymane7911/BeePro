@@ -442,6 +442,13 @@ export default function JarManagementDashboard() {
               <Package className="w-4 h-4 mr-2" />
               Create Batch
             </button>
+            <button
+              onClick={() => router.push('/premium')}
+              className="flex items-center px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-700 mr-3"
+            >
+              <Package className="w-4 h-4 mr-2" />
+              Premium
+            </button>
           </div>
         </div>
         <p className="text-gray-500 text-sm mt-1">
