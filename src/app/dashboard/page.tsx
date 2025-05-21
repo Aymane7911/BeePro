@@ -3,21 +3,91 @@
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle } from 'lucide-react';
-import { SearchIcon } from '@heroicons/react/outline';
 import { useRouter } from 'next/navigation';
-import { Sidebar } from './Sidebar';
-import { Backdrop } from './Backdrop';
-import { Header } from './Header';
-import { CreateBatchModal } from './CreateBatchModal';
+
+// Define your interfaces here, right after imports
+interface TokenStats {
+  originOnly: number;
+  qualityOnly: number;
+  bothCertifications: number;
+  remainingTokens: number;
+  totalTokens: number;
+}
+
+interface CertifiedHoneyWeight {
+  originOnly: number;
+  qualityOnly: number;
+  bothCertifications: number;
+}
+
+interface BatchData {
+  id?: string;
+  batchNumber?: string;
+  status?: string;
+  completedChecks?: number;
+  totalChecks?: number;
+  certificationDate?: string | null;
+  expiryDate?: string | null;
+  weightKg?: number;
+  jarsUsed?: number;
+  originOnly?: number;
+  qualityOnly?: number;
+  bothCertifications?: number;
+  uncertified?: number;
+  containerType?: string;
+  labelType?: string;
+  [key: string]: any; // Allow for other properties
+}
+
+interface ProcessedBatch {
+  id: string;
+  name: string;
+  status: string;
+  completedChecks: number;
+  totalChecks: number;
+  certificationDate: string | null;
+  expiryDate: string | null;
+  totalKg: number;
+  jarsUsed: number;
+  originOnly: number;
+  qualityOnly: number;
+  bothCertifications: number;
+  uncertified: number;
+  containerType: string;
+  labelType: string;
+  originOnlyPercent: number;
+  qualityOnlyPercent: number;
+  bothCertificationsPercent: number;
+  uncertifiedPercent: number;
+}
+
+interface AppData {
+  containers: any[];
+  labels: any[];
+  batches: BatchData[];
+  tokenStats: TokenStats;
+  certifiedHoneyWeight: CertifiedHoneyWeight;
+}
+
 
 
 // Mock data - in a real implementation, this would come from your backend microservices
-const initialData = {
+const initialData: AppData = {
   containers: [],
   labels: [],
   batches: [],
-  tokenStats: {},
-  certifiedHoneyWeight: {}
+  tokenStats: {
+    originOnly: 0,
+    qualityOnly: 0,
+    bothCertifications: 0,
+    remainingTokens: 0,
+    totalTokens: 0
+  },
+  certifiedHoneyWeight: {
+    originOnly: 0,
+    qualityOnly: 0,
+    bothCertifications: 0
+  }
 };
 
 // Token certification distribution data
@@ -28,7 +98,7 @@ const honeyStatusData = [];
 
 // A microservice dashboard for jar inventory management
 export default function JarManagementDashboard() {
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState<AppData>(initialData);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleString());
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -49,78 +119,169 @@ export default function JarManagementDashboard() {
   const [batchNumber, setBatchNumber] = useState('');
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [batchName, setBatchName] = useState(''); // Added batch name field
-
-  useEffect(() => {
+  
+ useEffect(() => {
   // Function to fetch data from API
+ 
+
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/batches');
+      // Initialize with default values to prevent null reference errors
+      const defaultData = {
+        containers: [],
+        labels: [],
+        batches: [],
+        tokenStats: {
+          originOnly: 0,
+          qualityOnly: 0,
+          bothCertifications: 0,
+          remainingTokens: 0,
+          totalTokens: 0
+        },
+        certifiedHoneyWeight: {
+          originOnly: 0,
+          qualityOnly: 0,
+          bothCertifications: 0
+        }
+      };
+
+      let data = defaultData;
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch data');
+      try {
+        const token = localStorage.getItem('token') || localStorage.getItem('authtoken');
+        
+        if (token) {
+          // Only attempt to fetch if a token exists
+          const response = await fetch('/api/batches', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (response.ok) {
+            const fetchedData = await response.json();
+            console.log('API response:', fetchedData);
+            console.log('Batches received:', fetchedData.batches);
+            // Merge with default data to ensure all properties exist
+            data = {
+              ...defaultData,
+              ...fetchedData,
+              tokenStats: {
+                ...defaultData.tokenStats,
+                ...(fetchedData.tokenStats || {})
+              },
+              certifiedHoneyWeight: {
+                ...defaultData.certifiedHoneyWeight,
+                ...(fetchedData.certifiedHoneyWeight || {})
+              }
+            };
+          } else {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to fetch data');
+          }
+        } else {
+          console.log('No auth token found, using mock data');
+          // Use mock data if no token exists - useful for development
+          // You can add more mock data here if needed
+          data = {
+            ...defaultData,
+            batches: allBatches
+          };
+        }
+      } catch (error) {
+        console.error('Error fetching from API:', error);
+        // Fallback to default data structure
       }
-      
-      const data = await response.json();
-      
-      // Set token distribution data for the chart
+
+      // Ensure tokenStats and certifiedHoneyWeight exist
+      data.tokenStats = data.tokenStats || defaultData.tokenStats;
+      data.certifiedHoneyWeight = data.certifiedHoneyWeight || defaultData.certifiedHoneyWeight;
+
       const newTokenDistributionData = [
-        { name: 'Origin Certified', value: data.tokenStats.originOnly, color: '#3B82F6' },
-        { name: 'Quality Certified', value: data.tokenStats.qualityOnly, color: '#10B981' },
-        { name: 'Fully Certified', value: data.tokenStats.bothCertifications * 2, color: '#8B5CF6' },
-        { name: 'Remaining', value: data.tokenStats.remainingTokens, color: '#9CA3AF' },
-      ];
-      
-      // Calculate percentages for honey status chart
-      const totalHoney = 
-        data.certifiedHoneyWeight.originOnly + 
-        data.certifiedHoneyWeight.qualityOnly + 
-        data.certifiedHoneyWeight.bothCertifications + 
-        data.batches.reduce((sum, batch) => sum + batch.uncertified, 0);
-      
-      const newHoneyStatusData = [
         { 
           name: 'Origin Certified', 
-          value: data.certifiedHoneyWeight.originOnly,
-          percentage: totalHoney > 0 ? Math.round((data.certifiedHoneyWeight.originOnly / totalHoney) * 100) : 0,
+          value: data.tokenStats.originOnly || 0, 
           color: '#3B82F6' 
         },
         { 
           name: 'Quality Certified', 
-          value: data.certifiedHoneyWeight.qualityOnly,
-          percentage: totalHoney > 0 ? Math.round((data.certifiedHoneyWeight.qualityOnly / totalHoney) * 100) : 0,
+          value: data.tokenStats.qualityOnly || 0, 
           color: '#10B981' 
         },
         { 
           name: 'Fully Certified', 
-          value: data.certifiedHoneyWeight.bothCertifications,
-          percentage: totalHoney > 0 ? Math.round((data.certifiedHoneyWeight.bothCertifications / totalHoney) * 100) : 0,
+          value: (data.tokenStats.bothCertifications || 0) * 2, 
           color: '#8B5CF6' 
         },
         { 
-          name: 'Uncertified', 
-          value: data.batches.reduce((sum, batch) => sum + batch.uncertified, 0),
-          percentage: totalHoney > 0 ? 
-            Math.round((data.batches.reduce((sum, batch) => sum + batch.uncertified, 0) / totalHoney) * 100) : 0,
+          name: 'Remaining', 
+          value: data.tokenStats.remainingTokens || 0, 
           color: '#9CA3AF' 
         },
       ];
-      
-      // Update state with fetched data
+
+      const totalHoney =
+        (data.certifiedHoneyWeight.originOnly || 0) +
+        (data.certifiedHoneyWeight.qualityOnly || 0) +
+        (data.certifiedHoneyWeight.bothCertifications || 0) +
+        (data.batches || []).reduce((sum, batch) => sum + (batch.uncertified || 0), 0);
+
+      const newHoneyStatusData = [
+        {
+          name: 'Origin Certified',
+          value: data.certifiedHoneyWeight.originOnly || 0,
+          percentage:
+            totalHoney > 0
+              ? Math.round(((data.certifiedHoneyWeight.originOnly || 0) / totalHoney) * 100)
+              : 0,
+          color: '#3B82F6',
+        },
+        {
+          name: 'Quality Certified',
+          value: data.certifiedHoneyWeight.qualityOnly || 0,
+          percentage:
+            totalHoney > 0
+              ? Math.round(((data.certifiedHoneyWeight.qualityOnly || 0) / totalHoney) * 100)
+              : 0,
+          color: '#10B981',
+        },
+        {
+          name: 'Fully Certified',
+          value: data.certifiedHoneyWeight.bothCertifications || 0,
+          percentage:
+            totalHoney > 0
+              ? Math.round(((data.certifiedHoneyWeight.bothCertifications || 0) / totalHoney) * 100)
+              : 0,
+          color: '#8B5CF6',
+        },
+        {
+          name: 'Uncertified',
+          value: (data.batches || []).reduce((sum, batch) => sum + (batch.uncertified || 0), 0),
+          percentage:
+            totalHoney > 0
+              ? Math.round(
+                  ((data.batches || []).reduce((sum, batch) => sum + (batch.uncertified || 0), 0) /
+                    totalHoney) *
+                    100
+                )
+              : 0,
+          color: '#9CA3AF',
+        },
+      ];
+
       setData(data);
       setTokenDistributionData(newTokenDistributionData);
       setHoneyStatusData(newHoneyStatusData);
       setLastUpdated(new Date().toLocaleString());
-      
     } catch (error) {
-      console.error('Error fetching data:', error);
-      // Show error notification
+      console.error('Error in fetchData:', error);
       setNotification({
         show: true,
-        message: `Error: ${error.message}`
+        message: `Error: ${error.message}`,
       });
-      
+
       setTimeout(() => {
         setNotification({ show: false, message: '' });
       }, 5000);
@@ -128,79 +289,80 @@ export default function JarManagementDashboard() {
       setLoading(false);
     }
   };
-  
+
   // Fetch data on component mount
   fetchData();
   
   // Set up a refresh interval (optional)
   // const intervalId = setInterval(fetchData, 60000); // Refresh every minute
-  // return () => clearInterval(intervalId); // Clean up on unmount
-}, []); // 
+  // return () => clearInterval(intervalId); // Clean up on unmount 
+}, []);  // Empty dependency array means this effect runs once on mount
 
-  const toggleSidebar = () => {
-    setSidebarOpen(!sidebarOpen);
-  };
+// Define these functions outside of useEffect
+const toggleSidebar = () => {
+  setSidebarOpen(!sidebarOpen);
+};
 
-  const refreshData = () => {
-    setLoading(true);
-    
-    // Simulate a microservice API call with setTimeout
-    setTimeout(() => {
-      // In a real app, you would fetch data from your microservices here
-      // Using fake data for demonstration purposes
-      const updatedData = {
-        ...data,
-        jars: data.jars.map(jar => ({ 
-          ...jar, 
-          count: jar.count + Math.floor(Math.random() * 10) - 3
-        })),
-        batches: [
-          { id: 'B1005', jarType: 'Plastic', labelType: 'Custom', quantity: 45, date: '2025-05-13' },
-          ...data.batches.slice(0, 3)
-        ]
-      };
-      
-      setData(updatedData);
-      setLoading(false);
-      setLastUpdated(new Date().toLocaleString());
-    }, 1000);
-  };
-
-  const handleBatchFormChange = (e) => {
-    const { name, value } = e.target;
-    if (name.startsWith('weight_')) {
-      const certType = name.replace('weight_', '');
-      setBatchFormData({
-        ...batchFormData,
-        weights: {
-          ...batchFormData.weights,
-          [certType]: parseInt(value, 10) || 0
-        }
-      });
-    } else {
-      setBatchFormData({
-        ...batchFormData,
-        [name]: value
-      });
-    }
-  };
-
-  const handleBuyTokens = () => {
-    // In a real app, this would connect to a payment processor
-    // For demo purposes, we'll just update the token count
-    const updatedTokenStats = {
-      ...data.tokenStats,
-      totalTokens: data.tokenStats.totalTokens + tokensToAdd,
-      remainingTokens: data.tokenStats.remainingTokens + tokensToAdd
+const refreshData = () => {
+  setLoading(true);
+  
+  // Simulate a microservice API call with setTimeout
+  setTimeout(() => {
+    // In a real app, you would fetch data from your microservices here
+    // Using fake data for demonstration purposes
+    const updatedData = {
+      ...data,
+      jars: data.jars.map(jar => ({ 
+        ...jar, 
+        count: jar.count + Math.floor(Math.random() * 10) - 3
+      })),
+      batches: [
+        { id: 'B1005', jarType: 'Plastic', labelType: 'Custom', quantity: 45, date: '2025-05-13' },
+        ...data.batches.slice(0, 3)
+      ]
     };
     
-    setData({
-      ...data,
-      tokenStats: updatedTokenStats
+    setData(updatedData);
+    setLoading(false);
+    setLastUpdated(new Date().toLocaleString());
+  }, 1000);
+};
+
+const handleBatchFormChange = (e) => {
+  const { name, value } = e.target;
+  if (name.startsWith('weight_')) {
+    const certType = name.replace('weight_', '');
+    setBatchFormData({
+      ...batchFormData,
+      weights: {
+        ...batchFormData.weights,
+        [certType]: parseInt(value, 10) || 0
+      }
     });
-    
-    setShowBuyTokensModal(false);
+  } else {
+    setBatchFormData({
+      ...batchFormData,
+      [name]: value
+    });
+  }
+};
+
+const handleBuyTokens = () => {
+  // In a real app, this would connect to a payment processor
+  // For demo purposes, we'll just update the token count
+  const updatedTokenStats = {
+    ...data.tokenStats,
+    totalTokens: data.tokenStats.totalTokens + tokensToAdd,
+    remainingTokens: data.tokenStats.remainingTokens + tokensToAdd
   };
+  
+  setData({
+    ...data,
+    tokenStats: updatedTokenStats
+  });
+  
+  setShowBuyTokensModal(false);
+};
 
   const createBatch = async () => {
   setLoading(true);
@@ -263,11 +425,90 @@ export default function JarManagementDashboard() {
   }
 };
 
-
 const [showAllBatches, setShowAllBatches] = useState(false);
-    // Sample batch data
-    const allBatches = [];
+const [expandedBatches, setExpandedBatches] = useState([]);
+// Function to toggle batch expansion
+    const toggleBatchExpansion = (batchId: string) => {
+      if (expandedBatches.includes(batchId)) {
+        setExpandedBatches(expandedBatches.filter(id => id !== batchId));
+      } else {
+        setExpandedBatches([...expandedBatches, batchId]);
+      }
+    };
+    
+    interface BatchData {
+  id?: string;
+  batchNumber?: string;
+  status?: string;
+  completedChecks?: number;
+  totalChecks?: number;
+  certificationDate?: string | null;
+  expiryDate?: string | null;
+  weightKg?: number;
+  jarsUsed?: number;
+  originOnly?: number;
+  qualityOnly?: number;
+  bothCertifications?: number;
+  uncertified?: number;
+  containerType?: string;
+  labelType?: string;
+  [key: string]: any; // Allow for other properties
+}
 
+// Convert data.batches to an array if it isn't already
+const batchesArray: BatchData[] = Array.isArray(data.batches) ? data.batches : [];
+
+
+  const allBatches: ProcessedBatch[] = batchesArray.map((batch: BatchData) => ({
+  id: batch.id || '',
+  name: batch.batchNumber || '',
+  status: batch.status || 'Pending',
+  completedChecks: batch.completedChecks || 0,
+  totalChecks: batch.totalChecks || 10, // Provide a default if missing
+  certificationDate: batch.certificationDate || null,
+  expiryDate: batch.expiryDate || null,
+  totalKg: batch.weightKg || 0, // Make sure we use weightKg here
+  jarsUsed: batch.jarsUsed || 0,
+  originOnly: batch.originOnly || 0,
+  qualityOnly: batch.qualityOnly || 0,
+  bothCertifications: batch.bothCertifications || 0,
+  uncertified: batch.uncertified || 0,
+  containerType: batch.containerType,
+  labelType: batch.labelType,
+  // Initialize percentage properties
+  originOnlyPercent: 0,
+  qualityOnlyPercent: 0,
+  bothCertificationsPercent: 0,
+  uncertifiedPercent: 0
+}));
+   // Fix the percentage calculations to properly handle edge cases
+allBatches.forEach(batch => {
+  const total = batch.originOnly + batch.qualityOnly + batch.bothCertifications + batch.uncertified;
+  
+  // Handle zero total case to avoid NaN
+  if (total === 0) {
+    batch.originOnlyPercent = 0;
+    batch.qualityOnlyPercent = 0;
+    batch.bothCertificationsPercent = 0;
+    batch.uncertifiedPercent = 100; // Default to 100% uncertified if no data
+  } else {
+    // Calculate percentages and round to ensure they add up to 100%
+    batch.originOnlyPercent = Math.round((batch.originOnly / total) * 100);
+    batch.qualityOnlyPercent = Math.round((batch.qualityOnly / total) * 100);
+    batch.bothCertificationsPercent = Math.round((batch.bothCertifications / total) * 100);
+    
+    // Calculate uncertified as remainder to ensure percentages sum to 100
+    batch.uncertifiedPercent = 100 - (
+      batch.originOnlyPercent + 
+      batch.qualityOnlyPercent + 
+      batch.bothCertificationsPercent
+    );
+    
+    // Handle edge case where rounding made total > 100
+    if (batch.uncertifiedPercent < 0) batch.uncertifiedPercent = 0;
+  }
+});
+    const [searchTerm, setSearchTerm] = useState('');
     // Filter batches based on search term
     const filteredBatches = allBatches.filter(batch => 
       batch.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -278,15 +519,19 @@ const [showAllBatches, setShowAllBatches] = useState(false);
     // Determine which batches to display
     const displayedBatches = showAllBatches ? filteredBatches : filteredBatches.slice(0, 3);
 
-    // Function to toggle batch expansion
-    const toggleBatchExpansion = (batchId) => {
-      if (expandedBatches.includes(batchId)) {
-        setExpandedBatches(expandedBatches.filter(id => id !== batchId));
-      } else {
-        setExpandedBatches([...expandedBatches, batchId]);
-      }
-    };
-
+    
+  interface BatchData {
+  batchName: string;
+  batchId: string;
+  category: string;
+  weight: number;
+  jars: number;
+  containerType: string;
+  labelType: string;
+  stockLevel: string;
+  location: string;
+  lastUpdated: string;
+}
   // Calculate totals
   const totalWeight = data.containers.reduce((sum, container) => sum + container.weight, 0);
   const totalLabels = data.labels.reduce((sum, label) => sum + label.count, 0);
@@ -294,10 +539,10 @@ const [showAllBatches, setShowAllBatches] = useState(false);
 
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [selectedCertification, setSelectedCertification] = useState(null);
-  const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItem, setSelectedItem] = useState<BatchData | null>(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const router = useRouter();
-  const [searchTerm, setSearchTerm] = useState('');
+  
   
 
 
@@ -792,11 +1037,11 @@ const [showAllBatches, setShowAllBatches] = useState(false);
             </div>
             <div>
               <p className="text-sm text-gray-500">Container Type</p>
-              <p className="font-medium">{selectedItem.containerType || "Glass"}</p>
+              <p className="font-medium">{selectedItem.containerType}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Label Type</p>
-              <p className="font-medium">{selectedItem.labelType || "Premium"}</p>
+              <p className="font-medium">{selectedItem.labelType}</p>
             </div>
           </div>
           
@@ -919,101 +1164,158 @@ const [showAllBatches, setShowAllBatches] = useState(false);
                 {/* Chart section with arrow indicators */}
                 <div>
                   <div className="text-center mb-2">
-                    <h3 className="text-md font-semibold">Total Kilograms: {batch.totalKg || "1000"}</h3>
-                    <p className="text-xs text-gray-500">Jars used: {batch.jarsUsed || "400"}</p>
+                    <h3 className="text-md font-semibold">Total Kilograms: {batch.totalKg || 0}</h3>
+                    <p className="text-xs text-gray-500">Jars used: {batch.jarsUsed || 0}</p>
                   </div>
                   <div className="h-48 flex items-center justify-center">
                     {/* SVG circle chart with arrow indicators */}
                     <div className="relative w-40 h-40">
-                      <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
-                        {/* Background circle */}
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="40"
-                          fill="transparent"
-                          stroke="#e5e7eb"
-                          strokeWidth="16"
-                        />
+                      {/* Calculate percentages from actual data or default to 0 */}
+                      {(() => {
+                        // Calculate actual percentages from batch data
+                        const originOnly = batch.originOnly || 0;
+                        const qualityOnly = batch.qualityOnly || 0;
+                        const bothCertifications = batch.bothCertifications || 0;
+                        const uncertified = batch.uncertified || 0;
+                        const total = originOnly + qualityOnly + bothCertifications + uncertified;
                         
-                        {/* Origin Only - Blue segment */}
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="40"
-                          fill="transparent"
-                          stroke="#3b82f6" 
-                          strokeWidth="16"
-                          strokeDasharray={`${(batch.originOnlyPercent || 25) * 2.51} 251`}
-                          strokeLinecap="butt"
-                        />
+                        // Calculate percentages (handle division by zero)
+                        const originOnlyPercent = total > 0 ? Math.round((originOnly / total) * 100) : 0;
+                        const qualityOnlyPercent = total > 0 ? Math.round((qualityOnly / total) * 100) : 0;
+                        const bothCertificationsPercent = total > 0 ? Math.round((bothCertifications / total) * 100) : 0;
+                        const uncertifiedPercent = total > 0 ? Math.round((uncertified / total) * 100) : 0;
                         
-                        {/* Quality Only - Green segment */}
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="40"
-                          fill="transparent"
-                          stroke="#10b981"
-                          strokeWidth="16"
-                          strokeDasharray={`${(batch.qualityOnlyPercent || 10) * 2.51} 251`}
-                          strokeDashoffset={`${-(batch.originOnlyPercent || 25) * 2.51}`}
-                          strokeLinecap="butt"
-                        />
-                        
-                        {/* Fully Certified - Purple segment */}
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="40"
-                          fill="transparent"
-                          stroke="#8b5cf6"
-                          strokeWidth="16"
-                          strokeDasharray={`${(batch.bothCertificationsPercent || 45) * 2.51} 251`}
-                          strokeDashoffset={`${-((batch.originOnlyPercent || 25) + (batch.qualityOnlyPercent || 10)) * 2.51}`}
-                          strokeLinecap="butt"
-                        />
-                        
-                        {/* Uncertified - Gray segment */}
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="40"
-                          fill="transparent"
-                          stroke="#9ca3af"
-                          strokeWidth="16"
-                          strokeDasharray={`${(batch.uncertifiedPercent || 20) * 2.51} 251`}
-                          strokeDashoffset={`${-((batch.originOnlyPercent || 25) + (batch.qualityOnlyPercent || 10) + (batch.bothCertificationsPercent || 45)) * 2.51}`}
-                          strokeLinecap="butt"
-                        />
-                      </svg>
+                        return (
+                          <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
+                            {/* Background circle */}
+                            <circle
+                              cx="50"
+                              cy="50"
+                              r="40"
+                              fill="transparent"
+                              stroke="#e5e7eb"
+                              strokeWidth="16"
+                            />
+                            
+                            {/* Only render segments if there's data to show */}
+                            {total > 0 && (
+                              <>
+                                {/* Origin Only - Blue segment */}
+                                {originOnlyPercent > 0 && (
+                                  <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="40"
+                                    fill="transparent"
+                                    stroke="#3b82f6" 
+                                    strokeWidth="16"
+                                    strokeDasharray={`${originOnlyPercent * 2.51} 251`}
+                                    strokeLinecap="butt"
+                                  />
+                                )}
+                                
+                                {/* Quality Only - Green segment */}
+                                {qualityOnlyPercent > 0 && (
+                                  <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="40"
+                                    fill="transparent"
+                                    stroke="#10b981"
+                                    strokeWidth="16"
+                                    strokeDasharray={`${qualityOnlyPercent * 2.51} 251`}
+                                    strokeDashoffset={`${-originOnlyPercent * 2.51}`}
+                                    strokeLinecap="butt"
+                                  />
+                                )}
+                                
+                                {/* Fully Certified - Purple segment */}
+                                {bothCertificationsPercent > 0 && (
+                                  <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="40"
+                                    fill="transparent"
+                                    stroke="#8b5cf6"
+                                    strokeWidth="16"
+                                    strokeDasharray={`${bothCertificationsPercent * 2.51} 251`}
+                                    strokeDashoffset={`${-(originOnlyPercent + qualityOnlyPercent) * 2.51}`}
+                                    strokeLinecap="butt"
+                                  />
+                                )}
+                                
+                                {/* Uncertified - Gray segment */}
+                                {uncertifiedPercent > 0 && (
+                                  <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="40"
+                                    fill="transparent"
+                                    stroke="#9ca3af"
+                                    strokeWidth="16"
+                                    strokeDasharray={`${uncertifiedPercent * 2.51} 251`}
+                                    strokeDashoffset={`${-(originOnlyPercent + qualityOnlyPercent + bothCertificationsPercent) * 2.51}`}
+                                    strokeLinecap="butt"
+                                  />
+                                )}
+                              </>
+                            )}
+                          </svg>
+                        );
+                      })()}
                       
                       {/* Center text display */}
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-sm font-medium">{batch.totalKg} kg</span>
-                        <span className="text-xs text-gray-500">{batch.jarsUsed} jars</span>
+                        <span className="text-sm font-medium">{batch.totalKg || 0} kg</span>
+                        <span className="text-xs text-gray-500">{batch.jarsUsed || 0} jars</span>
                       </div>
                       
-                      {/* Arrow indicators with percentages */}
-                      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-2 bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
-                        <span>↓</span>
-                        <span className="ml-1">{batch.originOnlyPercent || 25}%</span>
-                      </div>
-                      
-                      <div className="absolute right-0 top-1/2 transform translate-x-2 -translate-y-1/2 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
-                        <span>←</span>
-                        <span className="ml-1">{batch.qualityOnlyPercent || 10}%</span>
-                      </div>
-                      
-                      <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-2 bg-purple-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
-                        <span>↑</span>
-                        <span className="ml-1">{batch.bothCertificationsPercent || 45}%</span>
-                      </div>
-                      
-                      <div className="absolute left-0 top-1/2 transform -translate-x-2 -translate-y-1/2 bg-gray-400 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
-                        <span>→</span>
-                        <span className="ml-1">{batch.uncertifiedPercent || 20}%</span>
-                      </div>
+                      {/* Calculate percentages for arrow indicators */}
+                      {(() => {
+                        const originOnly = batch.originOnly || 0;
+                        const qualityOnly = batch.qualityOnly || 0;
+                        const bothCertifications = batch.bothCertifications || 0;
+                        const uncertified = batch.uncertified || 0;
+                        const total = originOnly + qualityOnly + bothCertifications + uncertified;
+                        
+                        const originOnlyPercent = total > 0 ? Math.round((originOnly / total) * 100) : 0;
+                        const qualityOnlyPercent = total > 0 ? Math.round((qualityOnly / total) * 100) : 0;
+                        const bothCertificationsPercent = total > 0 ? Math.round((bothCertifications / total) * 100) : 0;
+                        const uncertifiedPercent = total > 0 ? Math.round((uncertified / total) * 100) : 0;
+                        
+                        return (
+                          <>
+                            {/* Only show arrows if there's data */}
+                            {originOnlyPercent > 0 && (
+                              <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-2 bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                                <span>↓</span>
+                                <span className="ml-1">{originOnlyPercent}%</span>
+                              </div>
+                            )}
+                            
+                            {qualityOnlyPercent > 0 && (
+                              <div className="absolute right-0 top-1/2 transform translate-x-2 -translate-y-1/2 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                                <span>←</span>
+                                <span className="ml-1">{qualityOnlyPercent}%</span>
+                              </div>
+                            )}
+                            
+                            {bothCertificationsPercent > 0 && (
+                              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-2 bg-purple-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                                <span>↑</span>
+                                <span className="ml-1">{bothCertificationsPercent}%</span>
+                              </div>
+                            )}
+                            
+                            {uncertifiedPercent > 0 && (
+                              <div className="absolute left-0 top-1/2 transform -translate-x-2 -translate-y-1/2 bg-gray-400 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
+                                <span>→</span>
+                                <span className="ml-1">{uncertifiedPercent}%</span>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1022,63 +1324,89 @@ const [showAllBatches, setShowAllBatches] = useState(false);
                 <div className="border rounded-lg p-4 bg-gray-50">
                   <h3 className="text-md font-semibold mb-3">Certification Progress</h3>
                   <div className="flex flex-wrap justify-between mb-4">
-                    {[
-                      {
-                        color: "bg-blue-500",
-                        label: "Origin Certified",
-                        value: batch.originOnly || "250",
-                        percent: batch.originOnlyPercent || "25",
-                        jars: Math.round((batch.originOnly || 250) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
-                      },
-                      {
-                        color: "bg-green-500",
-                        label: "Quality Certified",
-                        value: batch.qualityOnly || "100",
-                        percent: batch.qualityOnlyPercent || "10",
-                        jars: Math.round((batch.qualityOnly || 100) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
-                      },
-                      {
-                        color: "bg-purple-500",
-                        label: "Fully Certified",
-                        value: batch.bothCertifications || "450",
-                        percent: batch.bothCertificationsPercent || "45",
-                        jars: Math.round((batch.bothCertifications || 450) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
-                      },
-                      {
-                        color: "bg-gray-400",
-                        label: "Uncertified",
-                        value: batch.uncertified || "200",
-                        percent: batch.uncertifiedPercent || "20",
-                        jars: Math.round((batch.uncertified || 200) * (batch.jarsUsed || 400) / (batch.totalKg || 1000))
-                      },
-                    ].map((item, index) => (
-                      <div 
-                        key={index} 
-                        className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12 cursor-pointer transform transition-transform hover:scale-105 hover:shadow-md"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedItem({
-                            batchName: batch.name,
-                            batchId: batch.id,
-                            category: item.label,
-                            weight: item.value,
-                            jars: item.jars,
-                            containerType: batch.containerType || "Glass",
-                            labelType: batch.labelType || "Premium",
-                            stockLevel: "In Stock",
-                            location: item.label === "Uncertified" ? "Pending Area" : "Certified Storage",
-                            lastUpdated: new Date().toLocaleDateString()
-                          });
-                        }}
-                      >
-                        <div className="flex items-center mb-1">
-                          <div className={`h-3 w-3 rounded-full ${item.color} mr-2`}></div>
-                          <p className="text-sm font-medium">{item.label}</p>
+                    {(() => {
+                      // Calculate jar counts from actual data
+                      const originOnly = batch.originOnly || 0;
+                      const qualityOnly = batch.qualityOnly || 0;
+                      const bothCertifications = batch.bothCertifications || 0;
+                      const uncertified = batch.uncertified || 0;
+                      const total = originOnly + qualityOnly + bothCertifications + uncertified;
+                      
+                      // Calculate percentages
+                      const originOnlyPercent = total > 0 ? Math.round((originOnly / total) * 100) : 0;
+                      const qualityOnlyPercent = total > 0 ? Math.round((qualityOnly / total) * 100) : 0;
+                      const bothCertificationsPercent = total > 0 ? Math.round((bothCertifications / total) * 100) : 0;
+                      const uncertifiedPercent = total > 0 ? Math.round((uncertified / total) * 100) : 0;
+                      
+                      // Calculate jar counts
+                      const totalJars = batch.jarsUsed || 0;
+                      const originOnlyJars = total > 0 ? Math.round(originOnly * totalJars / total) : 0;
+                      const qualityOnlyJars = total > 0 ? Math.round(qualityOnly * totalJars / total) : 0;
+                      const bothCertificationsJars = total > 0 ? Math.round(bothCertifications * totalJars / total) : 0;
+                      const uncertifiedJars = total > 0 ? Math.round(uncertified * totalJars / total) : 0;
+                      
+                      const certificationData = [
+                        {
+                          color: "bg-blue-500",
+                          label: "Origin Certified",
+                          value: originOnly,
+                          percent: originOnlyPercent,
+                          jars: originOnlyJars
+                        },
+                        {
+                          color: "bg-green-500",
+                          label: "Quality Certified",
+                          value: qualityOnly,
+                          percent: qualityOnlyPercent,
+                          jars: qualityOnlyJars
+                        },
+                        {
+                          color: "bg-purple-500",
+                          label: "Fully Certified",
+                          value: bothCertifications,
+                          percent: bothCertificationsPercent,
+                          jars: bothCertificationsJars
+                        },
+                        {
+                          color: "bg-gray-400",
+                          label: "Uncertified",
+                          value: uncertified,
+                          percent: uncertifiedPercent,
+                          jars: uncertifiedJars
+                        },
+                      ];
+                      
+                      return certificationData.map((item, index) => (
+                        <div 
+                          key={index} 
+                          className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12 cursor-pointer transform transition-transform hover:scale-105 hover:shadow-md"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedItem({
+                              batchName: batch.name,
+                              batchId: batch.id,
+                              category: item.label,
+                              weight: item.value,
+                              jars: item.jars,
+                              containerType: batch.containerType,
+                              labelType: batch.labelType,
+                              stockLevel: "In Stock",
+                              location: item.label === "Uncertified" ? "Pending Area" : "Certified Storage",
+                              lastUpdated: new Date().toLocaleDateString()
+                            });
+                          }}
+                        >
+                          <div className="flex items-center mb-1">
+                            <div className={`h-3 w-3 rounded-full ${item.color} mr-2`}></div>
+                            <p className="text-sm font-medium">{item.label}</p>
+                          </div>
+                          <p className="text-xl font-bold">{item.value} kg</p>
+                          <p className="text-xs text-gray-500">
+                            {item.jars} jars {item.percent > 0 ? `· ${item.percent}% of batch` : ''}
+                          </p>
                         </div>
-                        <p className="text-xl font-bold">{item.value} kg</p>
-                        <p className="text-xs text-gray-500">{item.jars} jars · {item.percent}% of batch</p>
-                      </div>
-                    ))}
+                      ));
+                    })()}
                   </div>
                 </div>
               </div>
@@ -1157,5 +1485,8 @@ const [showAllBatches, setShowAllBatches] = useState(false);
         </div>
       )}
     </div>
-);
-}
+   );
+  };
+
+
+
