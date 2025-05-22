@@ -107,22 +107,66 @@ export default function JarManagementDashboard() {
   const [showBuyTokensModal, setShowBuyTokensModal] = useState(false);
   const [tokensToAdd, setTokensToAdd] = useState(100);
   const [batchFormData, setBatchFormData] = useState({
+    apiaries: [
+      {
+        name: '',
+        number: '',
+        hiveCount: 0,
+        kilosCollected: 0
+      }
+    ],
     containerType: 'Glass',
     labelType: 'Standard',
     weightKg: 10,
     weights: {
-      originOnly: data.certifiedHoneyWeight.originOnly,
-      qualityOnly: data.certifiedHoneyWeight.qualityOnly,
-      bothCertifications: data.certifiedHoneyWeight.bothCertifications
+      originOnly: 0,
+      qualityOnly: 0,
+      bothCertifications: 0
     }
   });
   const [batchNumber, setBatchNumber] = useState('');
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [batchName, setBatchName] = useState(''); // Added batch name field
+  const addApiary = () => {
+    setBatchFormData({
+      ...batchFormData,
+      apiaries: [
+        ...batchFormData.apiaries,
+        {
+          name: '',
+          number: '',
+          hiveCount: '',
+          kilosCollected: ''
+        }
+      ]
+    });
+  };
+
+  const removeApiary = (index) => {
+    const updatedApiaries = [...batchFormData.apiaries];
+    updatedApiaries.splice(index, 1);
+    setBatchFormData({
+      ...batchFormData,
+      apiaries: updatedApiaries
+    });
+  };
+
+  const handleApiaryChange = (index, field, value) => {
+    const updatedApiaries = [...batchFormData.apiaries];
+    updatedApiaries[index] = {
+      ...updatedApiaries[index],
+      [field]: value
+    };
+    setBatchFormData({
+      ...batchFormData,
+      apiaries: updatedApiaries
+    });
+  };
+
   
  useEffect(() => {
   // Function to fetch data from API
- 
+  
 
   const fetchData = async () => {
     setLoading(true);
@@ -366,7 +410,7 @@ const handleBuyTokens = () => {
 
   const createBatch = async () => {
   setLoading(true);
-
+  
   try {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -376,13 +420,14 @@ const handleBuyTokens = () => {
     const formData = {
       batchNumber: batchNumber,
       batchName: batchName || '',
+      apiaries: batchFormData.apiaries, // ✅ MISSING - Include apiaries data
     };
 
     const response = await fetch('/api/create-batch', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`, // ✅ fixed here
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(formData),
     });
@@ -401,14 +446,19 @@ const handleBuyTokens = () => {
 
     setNotification({
       show: true,
-      message: `Batch created successfully! Your batch number is: ${result.batchNumber}`,
+      message: `Batch ${batchNumber} created successfully with ${batchFormData.apiaries.length} apiaries!`,
     });
 
     setTimeout(() => {
       setNotification({ show: false, message: '' });
     }, 5000);
 
+    // ✅ MISSING - Reset form data properly
     setBatchNumber('');
+    setBatchName(''); // Add this line
+    setBatchFormData({ 
+      apiaries: [{ name: '', number: '', hiveCount: '', kilosCollected: '' }] 
+    }); // Reset apiaries form data
     setShowBatchModal(false);
   } catch (error) {
     console.error('Error creating batch:', error);
@@ -424,7 +474,6 @@ const handleBuyTokens = () => {
     setLoading(false);
   }
 };
-
 const [showAllBatches, setShowAllBatches] = useState(false);
 const [expandedBatches, setExpandedBatches] = useState([]);
 // Function to toggle batch expansion
@@ -687,45 +736,152 @@ allBatches.forEach(batch => {
       {/* Create Batch Modal */}
       {showBatchModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold mb-4">Create New Batch</h3>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Batch Number
-              </label>
-              <input
-                type="text"
-                name="batchNumber"
-                value={batchNumber || ''}
-                onChange={(e) => setBatchNumber(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                placeholder="Enter batch number"
-                autoFocus
-              />
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Create New Batch</h3>
+              <button
+                onClick={() => setShowBatchModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
 
-            {/* Batch Name */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Batch Name
-        </label>
-        <input
-          type="text"
-          name="batchName"
-          value={batchName || ''}
-          onChange={(e) => setBatchName(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-          placeholder="Enter batch name (optional)"
-        />
-        <p className="text-xs text-gray-500 mt-1">If left empty, will default to "Batch {batchNumber}"</p>
-      </div>
-            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              {/* Batch Number */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Batch Number
+                </label>
+                <input
+                  type="text"
+                  name="batchNumber"
+                  value={batchNumber || ''}
+                  onChange={(e) => setBatchNumber(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  placeholder="Enter batch number"
+                  autoFocus
+                />
+              </div>
+
+              {/* Batch Name */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Batch Name
+                </label>
+                <input
+                  type="text"
+                  name="batchName"
+                  value={batchName || ''}
+                  onChange={(e) => setBatchName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  placeholder="Enter batch name (optional)"
+                />
+                <p className="text-xs text-gray-500 mt-1">If left empty, will default to "Batch {batchNumber}"</p>
+              </div>
+            </div>
+
+            {/* Associated Apiaries Section */}
+            <div className="mb-6">
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="font-medium">Associated Apiaries</h4>
+                <button
+                  type="button"
+                  onClick={addApiary}
+                  className="flex items-center text-sm text-blue-600 hover:text-blue-800"
+                >
+                  <PlusCircle className="h-4 w-4 mr-1" />
+                  Add Apiary
+                </button>
+              </div>
+
+              {batchFormData.apiaries.length === 0 && (
+                <div 
+                  className="border border-dashed border-gray-300 rounded-md p-4 text-center cursor-pointer hover:bg-gray-50 mb-4"
+                  onClick={addApiary}
+                >
+                  <PlusCircle className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+                  <p className="text-gray-500">Click to add an apiary</p>
+                </div>
+              )}
+
+              {batchFormData.apiaries.map((apiary, index) => (
+                <div key={index} className="border rounded-md p-4 mb-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <h5 className="font-medium">Apiary #{index + 1}</h5>
+                    {batchFormData.apiaries.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeApiary(index)}
+                        className="text-red-500 hover:text-red-700 text-sm"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Apiary Name
+                      </label>
+                      <input
+                        type="text"
+                        value={apiary.name}
+                        onChange={(e) => handleApiaryChange(index, 'name', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Apiary Number/ID
+                      </label>
+                      <input
+                        type="text"
+                        value={apiary.number}
+                        onChange={(e) => handleApiaryChange(index, 'number', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Number of Hives
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={apiary.hiveCount}
+                        onChange={(e) => handleApiaryChange(index, 'hiveCount', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Honey Collected (kg)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={apiary.kilosCollected}
+                        onChange={(e) => handleApiaryChange(index, 'kilosCollected', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => {
                   setShowBatchModal(false);
                   setBatchNumber('');
+                  setBatchName('');
                 }}
                 className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-100"
               >

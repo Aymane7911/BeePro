@@ -48,7 +48,7 @@ export async function POST(request: Request) {
         email: user.email,
       },
       process.env.JWT_SECRET!,
-      { expiresIn: '2h' }
+      { expiresIn: '24h' }
     );
 
     console.log('[Login API] JWT token generated:', token);
