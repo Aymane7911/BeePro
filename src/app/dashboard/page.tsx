@@ -417,10 +417,15 @@ const handleBuyTokens = () => {
       throw new Error("No token found. Please log in again.");
     }
 
+    // Generate batch name with timestamp if not provided
+    const finalBatchName = batchName && batchName.trim() 
+      ? batchName.trim() 
+      : `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
+
     const formData = {
       batchNumber: batchNumber,
-      batchName: batchName || '',
-      apiaries: batchFormData.apiaries, // ✅ MISSING - Include apiaries data
+      batchName: finalBatchName,
+      apiaries: batchFormData.apiaries, // ✅ Include apiaries data
     };
 
     const response = await fetch('/api/create-batch', {
@@ -453,13 +458,14 @@ const handleBuyTokens = () => {
       setNotification({ show: false, message: '' });
     }, 5000);
 
-    // ✅ MISSING - Reset form data properly
+    // ✅ Reset form data properly
     setBatchNumber('');
-    setBatchName(''); // Add this line
-    setBatchFormData({ 
-      apiaries: [{ name: '', number: '', hiveCount: '', kilosCollected: '' }] 
+    setBatchName('');
+    setBatchFormData({
+      apiaries: [{ name: '', number: '', hiveCount: '', kilosCollected: '' }]
     }); // Reset apiaries form data
     setShowBatchModal(false);
+    
   } catch (error) {
     console.error('Error creating batch:', error);
     setNotification({
@@ -751,7 +757,7 @@ allBatches.forEach(batch => {
               {/* Batch Number */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Batch Number
+                  Batch Number <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -767,7 +773,7 @@ allBatches.forEach(batch => {
               {/* Batch Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Batch Name
+                  Batch Name (Optional)
                 </label>
                 <input
                   type="text"
@@ -777,7 +783,9 @@ allBatches.forEach(batch => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
                   placeholder="Enter batch name (optional)"
                 />
-                <p className="text-xs text-gray-500 mt-1">If left empty, will default to "Batch {batchNumber}"</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  If left empty, will default to "{batchNumber ? `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}` : 'BatchNumber_YYYY-MM-DDTHH-MM-SS'}"
+                </p>
               </div>
             </div>
 
@@ -906,7 +914,6 @@ allBatches.forEach(batch => {
           {notification.message}
         </div>
       )}
-
       {/* Token Wallet Section */}
       <div className="bg-white p-4 rounded-lg shadow text-black">
         <h2 className="text-lg font-semibold mb-4">Token Wallet Overview</h2>
