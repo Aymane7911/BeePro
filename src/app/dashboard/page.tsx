@@ -135,8 +135,8 @@ export default function JarManagementDashboard() {
         {
           name: '',
           number: '',
-          hiveCount: '',
-          kilosCollected: ''
+          hiveCount: 0,
+          kilosCollected: 0
         }
       ]
     });
@@ -150,18 +150,23 @@ export default function JarManagementDashboard() {
       apiaries: updatedApiaries
     });
   };
-
-  const handleApiaryChange = (index, field, value) => {
-    const updatedApiaries = [...batchFormData.apiaries];
-    updatedApiaries[index] = {
-      ...updatedApiaries[index],
-      [field]: value
-    };
-    setBatchFormData({
-      ...batchFormData,
-      apiaries: updatedApiaries
-    });
+  // Add state to track token balance
+const [tokenBalance, setTokenBalance] = useState(0); // Start with 0
+  const handleApiaryChange = (
+  index: number,
+  field: keyof typeof batchFormData.apiaries[number],
+  value: string | number
+) => {
+  const updatedApiaries = [...batchFormData.apiaries];
+  updatedApiaries[index] = {
+    ...updatedApiaries[index],
+    [field]: value
   };
+  setBatchFormData({
+    ...batchFormData,
+    apiaries: updatedApiaries
+  });
+};
 
   
  useEffect(() => {
@@ -461,10 +466,12 @@ const handleBuyTokens = () => {
     // ✅ Reset form data properly
     setBatchNumber('');
     setBatchName('');
-    setBatchFormData({
-      apiaries: [{ name: '', number: '', hiveCount: '', kilosCollected: '' }]
-    }); // Reset apiaries form data
-    setShowBatchModal(false);
+   setBatchFormData(prev => ({
+  ...prev,
+  apiaries: [{ name: '', number: '', hiveCount: 0, kilosCollected: 0 }]
+}));
+setShowBatchModal(false);
+
     
   } catch (error) {
     console.error('Error creating batch:', error);
@@ -481,7 +488,8 @@ const handleBuyTokens = () => {
   }
 };
 const [showAllBatches, setShowAllBatches] = useState(false);
-const [expandedBatches, setExpandedBatches] = useState([]);
+const [expandedBatches, setExpandedBatches] = useState<string[]>([]);
+
 // Function to toggle batch expansion
     const toggleBatchExpansion = (batchId: string) => {
       if (expandedBatches.includes(batchId)) {
@@ -597,7 +605,43 @@ allBatches.forEach(batch => {
   const [selectedItem, setSelectedItem] = useState<BatchData | null>(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const router = useRouter();
-  
+  useEffect(() => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const tokensAdded = parseInt(urlParams.get('tokensAdded'));
+  if (tokensAdded) {
+    setTokenBalance(prev => prev + tokensAdded);
+    // Clean up URL
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}, []);
+useEffect(() => {
+  const handleTokensUpdated = (event: Event) => {
+    const customEvent = event as CustomEvent<{
+      action: string;
+      tokensAdded: number;
+      newBalance: number;
+    }>;
+
+    const { action, tokensAdded, newBalance } = customEvent.detail;
+
+    if (action === 'add') {
+      setTokenBalance(newBalance);
+    } else {
+      setTokenBalance(prev => prev + tokensAdded);
+    }
+  };
+
+  window.addEventListener('tokensUpdated', handleTokensUpdated);
+
+  return () => {
+    window.removeEventListener('tokensUpdated', handleTokensUpdated);
+  };
+}, []);
+// In your main component's initialization
+useEffect(() => {
+  const savedBalance = parseInt(localStorage.getItem('tokenBalance') || '0');
+  setTokenBalance(savedBalance);
+}, []);
   
 
 
@@ -691,21 +735,21 @@ allBatches.forEach(batch => {
               <h1 className="text-2xl font-bold text-gray-800">HoneyCertify</h1>
             </div>
           </div>
-          <div className="flex items-center">
-            <div className="mr-4 bg-gray-100 p-3 rounded-lg flex items-center">
-              <Wallet className="h-5 w-5 text-yellow-600 mr-2" />
-              <div>
-                <p className="text-sm text-gray-500">Token Balance</p>
-                <p className="text-lg font-bold">{data.tokenStats.remainingTokens} / {data.tokenStats.totalTokens}</p>
-              </div>
-              <button 
-                onClick={() => setShowBuyTokensModal(true)}
-                className="ml-3 p-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 flex items-center"
-              >
-                <PlusCircle className="h-4 w-4 mr-1" />
-                Buy
-              </button>
-            </div>
+         <div className="flex items-center">
+  <div className="mr-4 bg-gray-100 p-3 rounded-lg flex items-center">
+    <Wallet className="h-5 w-5 text-yellow-600 mr-2" />
+    <div>
+      <p className="text-sm text-gray-500">Token Balance</p>
+      <p className="text-lg font-bold">{tokenBalance}</p>
+    </div>
+    <button
+      onClick={() => router.push('/buy-token')}
+      className="ml-3 p-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 flex items-center"
+    >
+      <PlusCircle className="h-4 w-4 mr-1" />
+      Buy
+    </button>
+  </div>
             <button
               onClick={() => setShowBatchModal(true)}
               className="flex items-center px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 mr-3"
