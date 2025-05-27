@@ -61,6 +61,7 @@ interface CustomJar {
   id: number;
   size: number;
   quantity: number;
+  apiaryIndex?: number;
 }
 
 interface JarCertification {
@@ -307,125 +308,39 @@ useEffect(() => {
   fetchBatches();
 }, []);
 // Google Maps initialization useEffect
-useEffect(() => {
-  if (!showCompleteForm) return;
 
-  // Load Google Maps API script if it's not already loaded
-  if (!window.google && !document.querySelector('script[src*="maps.googleapis.com"]')) {
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places`;
-    script.async = true;
-    script.defer = true;
-    script.onload = initMaps;
-    document.head.appendChild(script);
-  } else if (window.google && window.google.maps) {
-    initMaps();
-  }
-}, [formData.apiaries.length, showCompleteForm]);
 
-// Function to initialize maps
-function initMaps() {
-  mapsLoaded.current = true;
-  
-  // Initialize maps for individual apiaries (existing functionality)
-  formData.apiaries.forEach((apiary, index) => {
-    const mapElement = document.getElementById(`map-${index}`);
-    if (!mapElement) return;
-                 
-    const position = { lat: apiary.latitude || 0, lng: apiary.longitude || 0 };
-    const map = new window.google.maps.Map(mapElement, {
-      center: position,
-      zoom: 10,
-    });
-                 
-    let marker = new window.google.maps.Marker({
-      position: position,
-      map: map,
-      draggable: true,
-      title: apiary.name || `Apiary ${index + 1}`,
-    });
-                 
-    // FIXED: Update coordinates when marker is dragged
-    window.google.maps.event.addListener(marker, 'dragend', function() {
-      const position = marker.getPosition();
-      if (!position) return; // Safety check
-      
-      setFormData(prevFormData => {
-        const newApiaries = prevFormData.apiaries.map((apiary, apiaryIndex) => {
-          if (apiaryIndex === index) {
-            return {
-              ...apiary, // Preserve ALL existing properties
-              latitude: position.lat(),
-              longitude: position.lng()
-            };
-          }
-          return apiary; // Return unchanged apiary
-        });
-        
-        return {
-          ...prevFormData, // Preserve all form data
-          apiaries: newApiaries
-        };
-      });
-    });
-                 
-    // FIXED: Click on map to place marker
-    window.google.maps.event.addListener(map, 'click', function(event: google.maps.MapMouseEvent) {
-      const latLng = event.latLng;
-      if (!latLng) return; // Safety check
-      
-      marker.setPosition(latLng);
-      
-      setFormData(prevFormData => {
-        const newApiaries = prevFormData.apiaries.map((apiary, apiaryIndex) => {
-          if (apiaryIndex === index) {
-            return {
-              ...apiary, // Preserve ALL existing properties
-              latitude: latLng.lat(),
-              longitude: latLng.lng()
-            };
-          }
-          return apiary; // Return unchanged apiary
-        });
-        
-        return {
-          ...prevFormData, // Preserve all form data
-          apiaries: newApiaries
-        };
-      });
-    });
-                 
-    mapRefs.current[index] = { map, marker };
-  });
-
-  // FIXED: Initialize individual maps for each apiary in complete batch form
-  formData.apiaries.forEach((apiary, index) => {
-    const apiaryLocationMapElement = document.getElementById(`apiary-location-map-${index}`);
-    if (apiaryLocationMapElement && showCompleteForm) {
+// Function to initialize maps for all apiaries
+// Function to initialize maps for all apiaries
+function initApiaryMaps() {
+  const initializeMap = (index) => {
+    const mapId = `apiary-location-map-${index}`;
+    const mapElement = document.getElementById(mapId);
+    
+    if (mapElement && !window[`apiariesMap_${index}`]) {
+      const apiary = formData.apiaries[index];
       const position = {
-        lat: apiary.latitude || 0,
-        lng: apiary.longitude || 0
+        lat: apiary.latitude || -34.397,
+        lng: apiary.longitude || 150.644
       };
-             
-      const map = new window.google.maps.Map(apiaryLocationMapElement, {
-        center: position,
-        zoom: 12,
+
+      // Initialize map for this apiary
+      const map = new window.google.maps.Map(mapElement, {
+        zoom: 15,
+        center: position
       });
-             
-      let marker = new window.google.maps.Marker({
+
+      const marker = new window.google.maps.Marker({
         position: position,
         map: map,
         draggable: true,
-        title: `${apiary.name} Certification Location`,
+        title: `${apiary.name || `Apiary ${index + 1}`} Certification Location`
       });
-             
-      // FIXED: Update coordinates when marker is dragged
-      window.google.maps.event.addListener(marker, 'dragend', function () {
+
+      // Update coordinates when marker is dragged
+      window.google.maps.event.addListener(marker, 'dragend', function() {
         const position = marker.getPosition();
-        if (!position) {
-          console.warn('Marker position is null.');
-          return;
-        }
+        if (!position) return; // Safety check
         
         setFormData(prevFormData => {
           const newApiaries = prevFormData.apiaries.map((apiary, apiaryIndex) => {
@@ -445,17 +360,14 @@ function initMaps() {
           };
         });
       });
-              
-      // FIXED: Click on map to place marker - THIS WAS THE MAIN ISSUE
-      window.google.maps.event.addListener(map, 'click', function(event: google.maps.MapMouseEvent) {
+
+      // Update coordinates when map is clicked
+      window.google.maps.event.addListener(map, 'click', (event) => {
         const latLng = event.latLng;
-        if (!latLng) {
-          console.warn('Click event latLng is null.');
-          return;
-        }
-
+        if (!latLng) return; // Safety check
+        
         marker.setPosition(latLng);
-
+        
         setFormData(prevFormData => {
           const newApiaries = prevFormData.apiaries.map((apiary, apiaryIndex) => {
             if (apiaryIndex === index) {
@@ -467,7 +379,7 @@ function initMaps() {
             }
             return apiary; // Return unchanged apiary
           });
-
+          
           return {
             ...prevFormData, // Preserve all form data
             apiaries: newApiaries
@@ -479,13 +391,60 @@ function initMaps() {
           lng: latLng.lng()
         });
       });
-             
+
       // Store references globally for access from input handlers
       window[`apiariesMap_${index}`] = map;
       window[`apiariesMarker_${index}`] = marker;
+      
+      console.log(`Map initialized for apiary ${index}`);
+    } else if (!mapElement) {
+      // Retry after a short delay if element not found
+      console.log(`Map element not found for apiary ${index}, retrying...`);
+      setTimeout(() => initializeMap(index), 100);
     }
+  };
+
+  // Initialize maps for all apiaries
+  formData.apiaries.forEach((apiary, index) => {
+    initializeMap(index);
   });
 }
+
+// Clean up maps when modal closes
+useEffect(() => {
+  if (!showCompleteForm) {
+    // Clean up map references
+    formData.apiaries.forEach((_, index) => {
+      delete window[`apiariesMap_${index}`];
+      delete window[`apiariesMarker_${index}`];
+    });
+  }
+}, [showCompleteForm]);
+
+// Add this useEffect to initialize maps for all apiaries
+useEffect(() => {
+  if (!showCompleteForm) return;
+
+  const initWithRetry = () => {
+    if (window.google && window.google.maps) {
+      initApiaryMaps();
+    } else {
+      setTimeout(initWithRetry, 100); // Retry until Google Maps is loaded
+    }
+  };
+
+  // Load Google Maps API script if it's not already loaded
+  if (!window.google && !document.querySelector('script[src*="maps.googleapis.com"]')) {
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = initWithRetry;
+    document.head.appendChild(script);
+  } else {
+    initWithRetry();
+  }
+}, [showCompleteForm, formData.apiaries.length]);
 
 // Function to use current location
 function handleUseCurrentLocation(index) {
@@ -1095,16 +1054,14 @@ const confirmDelete = async () => {
   }
 };
 // Add these state variables to your component
-const [newJar, setNewJar] = useState<Omit<CustomJar, 'id'>>({
-  size: 0,
-  quantity: 1
-});
-const [customJars, setCustomJars] = useState<CustomJar[]>([]);
+// Replace the above with:
+const [apiaryJars, setApiaryJars] = useState<{[key: number]: CustomJar[]}>({});
+const [newJarForApiary, setNewJarForApiary] = useState<{[key: number]: Omit<CustomJar, 'id'>}>({});
 const [jarCertifications, setJarCertifications] = useState<JarCertifications>({});
 
 // Add these helper functions
 const hasRequiredCertifications = () => {
-  return customJars.every(jar => jarCertifications[jar.id]?.selectedType);
+  return Object.values(apiaryJars).flat().every(jar => jarCertifications[jar.id]?.selectedType);
 };
 
 const needsProductionReport = () => {
@@ -1119,21 +1076,18 @@ const needsLabReport = () => {
   );
 };
 const tokenCalculation = useMemo(() => {
-  // Calculate tokens needed based on custom jars (1 token per jar)
-  const tokensNeeded = customJars.reduce((sum, jar) => sum + jar.quantity, 0);
+  const allJars = Object.values(apiaryJars).flat();
+  const totalJars = allJars.reduce((sum, jar) => sum + jar.quantity, 0);
+  const tokensNeeded = totalJars;
   const remaining = tokenBalance - tokensNeeded;
-  
-  // Calculate total jar weight in kg
-  const totalJarWeight = customJars.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0);
   
   return {
     tokensNeeded,
     remaining,
-    totalJarWeight,
-    isValid: tokensNeeded > 0,
-    hasExceededJars: totalJarWeight > getTotalHoneyFromApiaries()
+    isValid: remaining >= 0,
+    hasExceededJars: false
   };
-}, [customJars, tokenBalance, getTotalHoneyFromApiaries]);
+}, [apiaryJars, tokenBalance]);
 
 useEffect(() => {
   // Initialize token balance
@@ -1161,7 +1115,53 @@ useEffect(() => {
     window.removeEventListener('storage', handleStorageChange);
   };
 }, []);
+ 
+// Helper function to get jars for a specific apiary
+const getJarsForApiary = (apiaryIndex: number) => {
+  return apiaryJars[apiaryIndex] || [];
+};
 
+// Helper function to get total jars across all apiaries
+const getTotalJarsAcrossApiaries = () => {
+  return Object.values(apiaryJars).flat().reduce((sum, jar) => sum + jar.quantity, 0);
+};
+
+// Helper function to add jar to specific apiary
+const addJarToApiary = (apiaryIndex: number) => {
+  const newJar = newJarForApiary[apiaryIndex];
+  if (!newJar || newJar.size <= 0 || newJar.quantity <= 0) return;
+  
+  const apiary = formData.apiaries[apiaryIndex];
+  const currentJarsForApiary = getJarsForApiary(apiaryIndex);
+  const currentTotalWeight = currentJarsForApiary.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0);
+  const newJarWeight = (newJar.size * newJar.quantity) / 1000;
+  
+  if (currentTotalWeight + newJarWeight <= apiary.kilosCollected) {
+    setApiaryJars({
+      ...apiaryJars,
+      [apiaryIndex]: [
+        ...currentJarsForApiary,
+        { ...newJar, id: Date.now(), apiaryIndex }
+      ]
+    });
+    
+    // Reset new jar input for this apiary
+    setNewJarForApiary({
+      ...newJarForApiary,
+      [apiaryIndex]: { size: 0, quantity: 1 }
+    });
+  } else {
+    alert(`Cannot add jars. Total weight would exceed honey available for this apiary (${apiary.kilosCollected} kg)`);
+  }
+};
+
+// Helper function to remove jar from specific apiary
+const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
+  setApiaryJars({
+    ...apiaryJars,
+    [apiaryIndex]: getJarsForApiary(apiaryIndex).filter(jar => jar.id !== jarId)
+  });
+};
 
 
   if (!tokenStats) {
@@ -1898,133 +1898,183 @@ useEffect(() => {
 
           {/* Custom Jar Definition Section */}
           <div className="border rounded-md p-4 mb-4">
-            <h4 className="font-medium mb-3">Define Your Jars</h4>
-            <p className="text-sm text-gray-600 mb-4">
-              Define the jars you want to certify. You can create any jar size you want.
-              <br />
-              <strong>Available honey: {getTotalHoneyFromApiaries()} kg</strong>
-            </p>
+  <h4 className="font-medium mb-3">Define Jars for Each Apiary</h4>
+  <p className="text-sm text-gray-600 mb-4">
+    Define jars for each apiary individually based on their honey production.
+  </p>
 
-            {/* Add New Jar Form */}
-            <div className="bg-gray-50 p-4 rounded-lg mb-4">
-              <h5 className="font-medium mb-3">Add New Jar</h5>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Jar Size (grams)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={newJar.size}
-                    onChange={(e) => setNewJar({...newJar, size: parseInt(e.target.value) || 0})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g., 250, 400, 850"
-                  />
+  {formData.apiaries.map((apiary, apiaryIndex) => (
+    <div key={apiaryIndex} className="border rounded-md p-4 mb-6 bg-gray-50">
+      <h5 className="font-medium mb-3 text-lg">
+        {apiary.name} ({apiary.number})
+        <span className="ml-2 text-sm font-normal text-blue-600">
+          Available: {apiary.kilosCollected} kg
+        </span>
+      </h5>
+
+      {/* Add New Jar Form for this apiary */}
+      <div className="bg-white p-4 rounded-lg mb-4">
+        <h6 className="font-medium mb-3">Add Jars for This Apiary</h6>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Jar Size (grams)
+            </label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={newJarForApiary[apiaryIndex]?.size || 0}
+              onChange={(e) => setNewJarForApiary({
+                ...newJarForApiary,
+                [apiaryIndex]: {
+                  ...newJarForApiary[apiaryIndex],
+                  size: parseInt(e.target.value) || 0,
+                  quantity: newJarForApiary[apiaryIndex]?.quantity || 1
+                }
+              })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., 250, 400, 850"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Quantity
+            </label>
+            <input
+              type="number"
+              min="1"
+              value={newJarForApiary[apiaryIndex]?.quantity || 1}
+              onChange={(e) => setNewJarForApiary({
+                ...newJarForApiary,
+                [apiaryIndex]: {
+                  ...newJarForApiary[apiaryIndex],
+                  size: newJarForApiary[apiaryIndex]?.size || 0,
+                  quantity: parseInt(e.target.value) || 1
+                }
+              })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="How many jars"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => addJarToApiary(apiaryIndex)}
+              disabled={!newJarForApiary[apiaryIndex]?.size}
+              className={`w-full px-4 py-2 rounded-md flex items-center justify-center ${
+                newJarForApiary[apiaryIndex]?.size > 0
+                  ? 'bg-blue-500 hover:bg-blue-600 text-white' 
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Jars
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Display Current Jars for this apiary */}
+      {getJarsForApiary(apiaryIndex).length > 0 && (
+        <div className="space-y-3">
+          <h6 className="font-medium">Defined Jars for This Apiary</h6>
+          {getJarsForApiary(apiaryIndex).map((jar) => (
+            <div key={jar.id} className="flex items-center justify-between p-3 bg-white border rounded-md">
+              <div className="flex items-center space-x-4">
+                <div className="text-sm">
+                  <span className="font-medium">{jar.quantity}x {jar.size}g jars</span>
+                  <span className="text-gray-500 ml-2">
+                    = {((jar.size * jar.quantity) / 1000).toFixed(2)} kg total
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Quantity
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={newJar.quantity}
-                    onChange={(e) => setNewJar({...newJar, quantity: parseInt(e.target.value) || 1})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="How many jars"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newJar.size > 0 && newJar.quantity > 0) {
-                        const totalWeightOfNewJars = (newJar.size * newJar.quantity) / 1000; // Convert to kg
-                        const currentTotalWeight = customJars.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0);
-                        
-                        if (currentTotalWeight + totalWeightOfNewJars <= getTotalHoneyFromApiaries()) {
-                          setCustomJars([...customJars, {...newJar, id: Date.now()}]);
-                          setNewJar({size: 0, quantity: 1});
-                        } else {
-                          alert(`Cannot add jars. Total weight would exceed available honey (${getTotalHoneyFromApiaries()} kg)`);
-                        }
-                      }
-                    }}
-                    disabled={newJar.size === 0}
-                    className={`w-full px-4 py-2 rounded-md flex items-center justify-center ${
-                      newJar.size > 0 
-                        ? 'bg-blue-500 hover:bg-blue-600 text-white' 
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    }`}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Jars
-                  </button>
-                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeJarFromApiary(apiaryIndex, jar.id)}
+                className="text-red-500 hover:text-red-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+          
+          {/* Apiary Summary */}
+          <div className="bg-blue-50 p-3 rounded-lg">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="text-gray-600">Total Jars:</span>
+                <span className="ml-2 font-bold">{getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + jar.quantity, 0)}</span>
+              </div>
+              <div>
+                <span className="text-gray-600">Total Weight:</span>
+                <span className="ml-2 font-bold">
+                  {(getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0)).toFixed(2)} kg
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-600">Remaining:</span>
+                <span className="ml-2 font-bold text-green-600">
+                  {(apiary.kilosCollected - getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0)).toFixed(2)} kg
+                </span>
               </div>
             </div>
-
-            {/* Display Current Jars */}
-            {customJars.length > 0 && (
-              <div className="space-y-3">
-                <h5 className="font-medium">Your Defined Jars</h5>
-                {customJars.map((jar, index) => (
-                  <div key={jar.id} className="flex items-center justify-between p-3 bg-white border rounded-md">
-                    <div className="flex items-center space-x-4">
-                      <div className="text-sm">
-                        <span className="font-medium">{jar.quantity}x {jar.size}g jars</span>
-                        <span className="text-gray-500 ml-2">
-                          = {((jar.size * jar.quantity) / 1000).toFixed(2)} kg total
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomJars(customJars.filter(j => j.id !== jar.id));
-                      }}
-                      className="text-red-500 hover:text-red-700"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-                
-                {/* Total Summary */}
-                <div className="bg-blue-50 p-3 rounded-lg">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-600">Total Jars:</span>
-                      <span className="ml-2 font-bold">{customJars.reduce((sum, jar) => sum + jar.quantity, 0)}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Total Weight:</span>
-                      <span className="ml-2 font-bold">
-                        {(customJars.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0)).toFixed(2)} kg
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Remaining Honey:</span>
-                      <span className="ml-2 font-bold text-green-600">
-                        {(getTotalHoneyFromApiaries() - customJars.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0)).toFixed(2)} kg
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Tokens Needed:</span>
-                      <span className="ml-2 font-bold text-yellow-600">
-                        {customJars.reduce((sum, jar) => sum + jar.quantity, 0)} tokens
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
+        </div>
+      )}
 
+      {getJarsForApiary(apiaryIndex).length === 0 && (
+        <div 
+          className="border border-dashed border-gray-300 rounded-md p-4 text-center cursor-pointer hover:bg-gray-50"
+          onClick={() => {
+            if (!newJarForApiary[apiaryIndex]) {
+              setNewJarForApiary({
+                ...newJarForApiary,
+                [apiaryIndex]: { size: 250, quantity: 1 }
+              });
+            }
+          }}
+        >
+          <PlusCircle className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+          <p className="text-gray-500">Click to add jars for this apiary</p>
+        </div>
+      )}
+    </div>
+  ))}
+
+  {/* Overall Summary */}
+  {Object.keys(apiaryJars).length > 0 && (
+    <div className="bg-yellow-50 p-4 rounded-lg">
+      <h5 className="font-medium mb-2">Overall Summary</h5>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+        <div>
+          <span className="text-gray-600">Total Jars:</span>
+          <span className="ml-2 font-bold">{getTotalJarsAcrossApiaries()}</span>
+        </div>
+        <div>
+          <span className="text-gray-600">Total Weight:</span>
+          <span className="ml-2 font-bold">
+            {Object.values(apiaryJars).flat().reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0).toFixed(2)} kg
+          </span>
+        </div>
+        <div>
+          <span className="text-gray-600">Total Available:</span>
+          <span className="ml-2 font-bold text-blue-600">
+            {getTotalHoneyFromApiaries()} kg
+          </span>
+        </div>
+        <div>
+          <span className="text-gray-600">Tokens Needed:</span>
+          <span className="ml-2 font-bold text-yellow-600">
+            {getTotalJarsAcrossApiaries()} tokens
+          </span>
+        </div>
+      </div>
+    </div>
+  )}
+</div>
           {/* Certification Selection for Jars */}
-          {customJars.length > 0 && (
+          {Object.keys(apiaryJars).length > 0 && (
             <div className="border rounded-md p-4 mb-4">
               <h4 className="font-medium mb-3">Select Certifications for Your Jars</h4>
               <p className="text-sm text-gray-600 mb-4">
@@ -2032,7 +2082,7 @@ useEffect(() => {
               </p>
               
               <div className="space-y-4">
-                {customJars.map((jar, index) => (
+                {Object.values(apiaryJars).flat().map((jar, index) => (
                   <div key={jar.id} className="border rounded-md p-4 bg-gray-50">
                     <div className="flex items-center justify-between mb-4">
                       <h5 className="font-medium">
@@ -2166,7 +2216,7 @@ useEffect(() => {
                   <div>
   <span className="text-gray-600">Total Tokens:</span>
   <span className="ml-2 font-bold text-yellow-600">
-    {customJars.reduce((sum, jar) => sum + jar.quantity, 0)} tokens
+    {Object.values(apiaryJars).flat().reduce((sum, jar) => sum + jar.quantity, 0)} tokens
   </span>
 </div>
                 </div>
@@ -2175,7 +2225,7 @@ useEffect(() => {
           )}
 
           {/* File Upload Section - only show if jars are defined and certifications selected */}
-          {customJars.length > 0 && hasRequiredCertifications() && (
+          {Object.keys(apiaryJars).length > 0 && hasRequiredCertifications() && (
             <div className="border rounded-md p-4 mb-4">
               <h4 className="font-medium mb-3">Required Documents</h4>
               
