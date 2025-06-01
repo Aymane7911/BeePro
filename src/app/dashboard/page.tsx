@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle } from 'lucide-react';
+import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 // Define your interfaces here, right after imports
@@ -14,6 +14,13 @@ interface TokenStats {
   totalTokens: number;
 }
 
+interface ApiaryLocation {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  createdAt?: string;
+}
 interface CertifiedHoneyWeight {
   originOnly: number;
   qualityOnly: number;
@@ -93,6 +100,9 @@ const initialData: AppData = {
 // Token certification distribution data
 const tokenDistributionData = [];
 
+
+
+
 // Honey certification status data
 const honeyStatusData = [];
 
@@ -106,6 +116,15 @@ export default function JarManagementDashboard() {
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [showBuyTokensModal, setShowBuyTokensModal] = useState(false);
   const [tokensToAdd, setTokensToAdd] = useState(100);
+  // Add these state variables to your existing component
+  const [showLocationConfirm, setShowLocationConfirm] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const mapRef = useRef(null);
+  const googleMapRef = useRef(null);
+  const googleMapsApiKey = "AIzaSyBhRpOpnKWIXGMOTsdVoGKAnAC94Q0Sgxc"; 
+  const [savedApiaryLocations, setSavedApiaryLocations] = useState<ApiaryLocation[]>([]);
+  // 1. Add clickPosition state to track where user clicked for bubble positioning
+  const [clickPosition, setClickPosition] = useState({ x: 0, y: 0 });
   const [batchFormData, setBatchFormData] = useState({
     apiaries: [
       {
@@ -142,7 +161,7 @@ export default function JarManagementDashboard() {
     });
   };
 
-  const removeApiary = (index) => {
+  const removeApiary = (index: number) => {
     const updatedApiaries = [...batchFormData.apiaries];
     updatedApiaries.splice(index, 1);
     setBatchFormData({
@@ -150,6 +169,29 @@ export default function JarManagementDashboard() {
       apiaries: updatedApiaries
     });
   };
+  const [isSaving, setIsSaving] = useState(false);
+
+  
+
+// 3. Function to fetch saved apiary locations
+const fetchSavedApiaryLocations = async () => {
+  try {
+    const response = await fetch('/api/apiaries/locations');
+    if (response.ok) {
+      const locations = await response.json();
+      setSavedApiaryLocations(locations);
+    }
+  } catch (error) {
+    console.error('Error fetching apiary locations:', error);
+  }
+};
+
+// 4. Call fetchSavedApiaryLocations on component mount
+useEffect(() => {
+  fetchSavedApiaryLocations();
+}, []);
+
+
   // Add state to track token balance
 const [tokenBalance, setTokenBalance] = useState(0); // Start with 0
   const handleApiaryChange = (
@@ -642,81 +684,212 @@ useEffect(() => {
   const savedBalance = parseInt(localStorage.getItem('tokenBalance') || '0');
   setTokenBalance(savedBalance);
 }, []);
-  
 
+
+useEffect(() => {
+  const initMap = () => {
+    if (window.google && mapRef.current) {
+      const map = new window.google.maps.Map(mapRef.current, {
+        center: { lat: 52.0907, lng: 5.1214 },
+        zoom: 8,
+        styles: [
+          {
+            featureType: 'poi',
+            elementType: 'labels',
+            stylers: [{ visibility: 'off' }]
+          }
+        ]
+      });
+
+      googleMapRef.current = map;
+
+      // Add click listener to map with precise position tracking
+      map.addListener('click', (event) => {
+        const lat = event.latLng.lat();
+        const lng = event.latLng.lng();
+        
+        // Get the exact pixel position of the click relative to the map container
+        const mapRect = mapRef.current.getBoundingClientRect();
+        const overlay = new window.google.maps.OverlayView();
+        
+        overlay.onAdd = function() {
+          // Get the pixel position of the clicked lat/lng
+          const projection = this.getProjection();
+          const pixelPosition = projection.fromLatLngToContainerPixel(event.latLng);
+          
+          // Calculate absolute position on the page
+          const clickX = mapRect.left + pixelPosition.x + window.scrollX;
+          const clickY = mapRect.top + pixelPosition.y + window.scrollY;
+          
+          console.log('Map clicked at:', { lat, lng, x: clickX, y: clickY });
+          setSelectedLocation({ lat, lng });
+          setClickPosition({ x: clickX, y: clickY });
+          setShowLocationConfirm(true);
+          
+          // Remove the overlay after getting the position
+          overlay.setMap(null);
+        };
+        
+        overlay.draw = function() {};
+        overlay.setMap(map);
+      });
+    }
+  };
+
+  if (!window.google) {
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places`;
+    script.async = true;
+    script.onload = initMap;
+    document.head.appendChild(script);
+  } else {
+    initMap();
+  }
+}, []);
+
+// Add these handler functions
+const handleLocationConfirm = async () => {
+  if (!selectedLocation) return;
+     
+  try {
+    const response = await fetch('/api/apiaries/locations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        latitude: selectedLocation.lat,
+        longitude: selectedLocation.lng,
+        name: `Location ${new Date().toLocaleString()}`,
+      }),
+    });
+         
+    if (response.ok) {
+      const newLocation = await response.json();
+      setSavedApiaryLocations(prev => [...prev, newLocation]);
+      
+      // Show success notification
+      setNotification({
+        show: true,
+        message: 'Apiary location saved successfully!'
+      });
+      
+      // Hide notification after 3 seconds
+      setTimeout(() => {
+        setNotification({ show: false, message: '' });
+      }, 3000);
+             
+      // Reset the modal state
+      setShowLocationConfirm(false);
+      setSelectedLocation(null);
+    } else {
+      const errorData = await response.json();
+      console.error('API Error:', errorData);
+      
+      // Show error notification
+      setNotification({
+        show: true,
+        message: `Failed to save location: ${errorData.error || 'Unknown error'}`
+      });
+      
+      // Hide notification after 3 seconds
+      setTimeout(() => {
+        setNotification({ show: false, message: '' });
+      }, 3000);
+    }
+  } catch (error) {
+    console.error('Error saving apiary location:', error);
+    
+    // Show error notification
+    setNotification({
+      show: true,
+      message: 'Failed to save apiary location'
+    });
+    
+    // Hide notification after 3 seconds
+    setTimeout(() => {
+      setNotification({ show: false, message: '' });
+    }, 3000);
+  }
+};
+
+// Remove the unused saveApiaryLocation function
+const handleLocationCancel = () => {
+  setShowLocationConfirm(false);
+  setSelectedLocation(null);
+};
 
   return (
     <div className="flex flex-col space-y-6 p-6 min-h-screen bg-gradient-to-b from-yellow-200 to-white text-black">
       {/* Sidebar */}
-      <div className={`fixed top-0 left-0 h-full bg-gray-800 text-white transition-all duration-300 ease-in-out z-20 ${sidebarOpen ? 'w-64' : 'w-0'} overflow-hidden`}>
-        <div className="p-4 flex justify-between items-center">
-          <h2 className="text-xl font-bold">Menu</h2>
-          <button onClick={toggleSidebar} className="p-1 hover:bg-gray-700 rounded">
-            <X className="h-6 w-6" />
-          </button>
-        </div>
-        <nav className="mt-8">
-          <ul className="space-y-2">
-            <li>
-              <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Home className="h-5 w-5 mr-3" />
-                Dashboard
-              </a>
-            </li>
-            <li>
-              <a href="/batches" 
-              onClick={(e) => {
-          e.preventDefault();
-          // For a React app with routing, you could use:
-          router.push('/batches');
-        }} 
-              className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Layers className="h-5 w-5 mr-3" />
-                Batches
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Activity className="h-5 w-5 mr-3" />
-                Analytics
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Wallet className="h-5 w-5 mr-3" />
-                Token Wallet
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Users className="h-5 w-5 mr-3" />
-                Profile
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <Settings className="h-5 w-5 mr-3" />
-                Settings
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <HelpCircle className="h-5 w-5 mr-3" />
-                Help
-              </a>
-            </li>
-          </ul>
-        </nav>
-      </div>
-      
-      {/* Backdrop overlay when sidebar is open */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-10"
-          onClick={toggleSidebar}
-        ></div>
-      )}
+<div className={`fixed top-0 left-0 h-full bg-gray-800 text-white transition-all duration-300 ease-in-out z-20 ${sidebarOpen ? 'w-64' : 'w-0'} overflow-hidden`}>
+  <div className="p-4 flex justify-between items-center">
+    <h2 className="text-xl font-bold">Menu</h2>
+    <button onClick={toggleSidebar} className="p-1 hover:bg-gray-700 rounded">
+      <X className="h-6 w-6" />
+    </button>
+  </div>
+  <nav className="mt-8">
+    <ul className="space-y-2">
+      <li>
+        <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Home className="h-5 w-5 mr-3" />
+          Dashboard
+        </a>
+      </li>
+      <li>
+        <a href="/batches"
+         onClick={(e) => {
+    e.preventDefault();
+    // For a React app with routing, you could use:
+    router.push('/batches');
+  }}
+         className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Layers className="h-5 w-5 mr-3" />
+          Batches
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Activity className="h-5 w-5 mr-3" />
+          Analytics
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Wallet className="h-5 w-5 mr-3" />
+          Token Wallet
+        </a>
+      </li>
+      <li>
+        <a href="/profile" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Users className="h-5 w-5 mr-3" />
+          Profile
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Settings className="h-5 w-5 mr-3" />
+          Settings
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <HelpCircle className="h-5 w-5 mr-3" />
+          Help
+        </a>
+      </li>
+    </ul>
+  </nav>
+</div>
 
+{/* Backdrop overlay when sidebar is open - now with blur effect */}
+{sidebarOpen && (
+  <div 
+    className="fixed inset-0 backdrop-blur-sm bg-black/20 z-10"
+    onClick={toggleSidebar}
+  ></div>
+)}
       <header className="bg-white p-4 rounded-lg shadow text-black">
         <div className="flex justify-between items-center">
           <div className="flex items-center">
@@ -784,174 +957,271 @@ useEffect(() => {
       </header>
 
       {/* Create Batch Modal */}
-      {showBatchModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Create New Batch</h3>
-              <button
-                onClick={() => setShowBatchModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X className="h-5 w-5" />
-              </button>
+{showBatchModal && (
+  <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-30">
+    <div className="bg-white rounded-lg p-6 w-full max-w-3xl max-h-screen overflow-y-auto mx-4">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-xl font-bold">Create New Batch</h3>
+        <button
+          onClick={() => {
+            setShowBatchModal(false);
+            setBatchNumber('');
+            setBatchName('');
+            setBatchFormData({ apiaries: [{ name: '', number: '', hiveCount: 0, kilosCollected: 0, locationId: '' }] });
+          }}
+          className="text-gray-500 hover:text-gray-700"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {/* Batch Number */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Batch Number <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            name="batchNumber"
+            value={batchNumber || ''}
+            onChange={(e) => setBatchNumber(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="Enter batch number"
+            autoFocus
+          />
+        </div>
+
+        {/* Batch Name */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Batch Name (Optional)
+          </label>
+          <input
+            type="text"
+            name="batchName"
+            value={batchName || ''}
+            onChange={(e) => setBatchName(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="Enter batch name (optional)"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            If left empty, will default to "{batchNumber ? `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}` : 'BatchNumber_YYYY-MM-DDTHH-MM-SS'}"
+          </p>
+        </div>
+      </div>
+
+      {/* Associated Apiaries Section */}
+      <div className="mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h4 className="font-medium text-lg">Associated Apiaries</h4>
+          <button
+            type="button"
+            onClick={addApiary}
+            className="flex items-center text-sm text-blue-600 hover:text-blue-800 px-3 py-1 rounded-md border border-blue-200 hover:bg-blue-50"
+          >
+            <PlusCircle className="h-4 w-4 mr-1" />
+            Add Apiary
+          </button>
+        </div>
+
+        {/* No Apiaries State */}
+        {batchFormData.apiaries.length === 0 && (
+          <div 
+            className="border border-dashed border-gray-300 rounded-md p-6 text-center cursor-pointer hover:bg-gray-50 mb-4"
+            onClick={addApiary}
+          >
+            <PlusCircle className="h-8 w-8 mx-auto text-gray-400 mb-2" />
+            <p className="text-gray-500 font-medium">Click to add your first apiary</p>
+            <p className="text-xs text-gray-400 mt-1">You'll need at least one apiary to create a batch</p>
+          </div>
+        )}
+
+        {/* Saved Locations Info */}
+        {savedApiaryLocations.length === 0 && batchFormData.apiaries.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mb-4">
+            <div className="flex items-center">
+              <MapPin className="h-4 w-4 text-amber-600 mr-2" />
+              <p className="text-sm text-amber-800">
+                No saved locations available. Click on the map to save apiary locations first.
+              </p>
             </div>
+          </div>
+        )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              {/* Batch Number */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Batch Number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="batchNumber"
-                  value={batchNumber || ''}
-                  onChange={(e) => setBatchNumber(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  placeholder="Enter batch number"
-                  autoFocus
-                />
-              </div>
-
-              {/* Batch Name */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Batch Name (Optional)
-                </label>
-                <input
-                  type="text"
-                  name="batchName"
-                  value={batchName || ''}
-                  onChange={(e) => setBatchName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  placeholder="Enter batch name (optional)"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  If left empty, will default to "{batchNumber ? `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}` : 'BatchNumber_YYYY-MM-DDTHH-MM-SS'}"
-                </p>
-              </div>
-            </div>
-
-            {/* Associated Apiaries Section */}
-            <div className="mb-6">
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-medium">Associated Apiaries</h4>
+        {/* Apiaries List */}
+        {batchFormData.apiaries.map((apiary, index) => (
+          <div key={index} className="border rounded-lg p-4 mb-4 bg-gray-50">
+            <div className="flex justify-between items-center mb-3">
+              <h5 className="font-medium text-gray-800">Apiary #{index + 1}</h5>
+              {batchFormData.apiaries.length > 1 && (
                 <button
                   type="button"
-                  onClick={addApiary}
-                  className="flex items-center text-sm text-blue-600 hover:text-blue-800"
+                  onClick={() => removeApiary(index)}
+                  className="text-red-500 hover:text-red-700 text-sm flex items-center"
                 >
-                  <PlusCircle className="h-4 w-4 mr-1" />
-                  Add Apiary
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Remove
                 </button>
-              </div>
-
-              {batchFormData.apiaries.length === 0 && (
-                <div 
-                  className="border border-dashed border-gray-300 rounded-md p-4 text-center cursor-pointer hover:bg-gray-50 mb-4"
-                  onClick={addApiary}
-                >
-                  <PlusCircle className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-                  <p className="text-gray-500">Click to add an apiary</p>
-                </div>
               )}
-
-              {batchFormData.apiaries.map((apiary, index) => (
-                <div key={index} className="border rounded-md p-4 mb-4">
-                  <div className="flex justify-between items-center mb-3">
-                    <h5 className="font-medium">Apiary #{index + 1}</h5>
-                    {batchFormData.apiaries.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeApiary(index)}
-                        className="text-red-500 hover:text-red-700 text-sm"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Apiary Name
-                      </label>
-                      <input
-                        type="text"
-                        value={apiary.name}
-                        onChange={(e) => handleApiaryChange(index, 'name', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Apiary Number/ID
-                      </label>
-                      <input
-                        type="text"
-                        value={apiary.number}
-                        onChange={(e) => handleApiaryChange(index, 'number', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Number of Hives
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={apiary.hiveCount}
-                        onChange={(e) => handleApiaryChange(index, 'hiveCount', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Honey Collected (kg)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        value={apiary.kilosCollected}
-                        onChange={(e) => handleApiaryChange(index, 'kilosCollected', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                        required
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
             </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Apiary Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={apiary.name}
+                  onChange={(e) => handleApiaryChange(index, 'name', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  placeholder="Enter apiary name"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Apiary Number/ID <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={apiary.number}
+                  onChange={(e) => handleApiaryChange(index, 'number', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  placeholder="Enter apiary ID"
+                  required
+                />
+              </div>
+              
+              {/* Location Dropdown */}
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Apiary Location <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={apiary.locationId || ''}
+                  onChange={(e) => handleApiaryChange(index, 'locationId', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  required
+                >
+                  <option value="">Select a saved location</option>
+                  {savedApiaryLocations.map(location => (
+                    <option key={location.id} value={location.id}>
+                      {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+                    </option>
+                  ))}
+                </select>
+                {savedApiaryLocations.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1 flex items-center">
+                    <MapPin className="h-3 w-3 mr-1" />
+                    No saved locations. Click on the map to save apiary locations first.
+                  </p>
+                )}
+                {apiary.locationId && (
+                  <p className="text-xs text-green-600 mt-1 flex items-center">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    Location selected successfully
+                  </p>
+                )}
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Number of Hives <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={apiary.hiveCount}
+                  onChange={(e) => handleApiaryChange(index, 'hiveCount', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  placeholder="0"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Honey Collected (kg) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={apiary.kilosCollected}
+                  onChange={(e) => handleApiaryChange(index, 'kilosCollected', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  placeholder="0.0"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
 
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowBatchModal(false);
-                  setBatchNumber('');
-                  setBatchName('');
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={createBatch}
-                disabled={!batchNumber}
-                className={`px-4 py-2 rounded-md text-white ${
-                  batchNumber ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed'
-                }`}
-              >
-                Create
-              </button>
+      {/* Summary Section */}
+      {batchFormData.apiaries.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+          <h5 className="font-medium text-blue-900 mb-2">Batch Summary</h5>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-blue-700 font-medium">Total Apiaries</p>
+              <p className="text-blue-900 text-lg font-bold">{batchFormData.apiaries.length}</p>
+            </div>
+            <div>
+              <p className="text-blue-700 font-medium">Total Hives</p>
+              <p className="text-blue-900 text-lg font-bold">
+                {batchFormData.apiaries.reduce((sum, apiary) => sum + (parseInt(apiary.hiveCount) || 0), 0)}
+              </p>
+            </div>
+            <div>
+              <p className="text-blue-700 font-medium">Total Honey (kg)</p>
+              <p className="text-blue-900 text-lg font-bold">
+                {batchFormData.apiaries.reduce((sum, apiary) => sum + (parseFloat(apiary.kilosCollected) || 0), 0).toFixed(1)}
+              </p>
+            </div>
+            <div>
+              <p className="text-blue-700 font-medium">Locations Set</p>
+              <p className="text-blue-900 text-lg font-bold">
+                {batchFormData.apiaries.filter(apiary => apiary.locationId).length}/{batchFormData.apiaries.length}
+              </p>
             </div>
           </div>
         </div>
       )}
+
+      {/* Action Buttons */}
+      <div className="flex justify-end space-x-3 pt-4 border-t">
+        <button
+          onClick={() => {
+            setShowBatchModal(false);
+            setBatchNumber('');
+            setBatchName('');
+            setBatchFormData({ apiaries: [{ name: '', number: '', hiveCount: 0, kilosCollected: 0, locationId: '' }] });
+          }}
+          className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={createBatch}
+          disabled={!batchNumber || batchFormData.apiaries.length === 0 || batchFormData.apiaries.some(apiary => !apiary.name || !apiary.number || !apiary.locationId)}
+          className={`px-6 py-2 rounded-md text-white font-medium transition-colors ${
+            batchNumber && batchFormData.apiaries.length > 0 && batchFormData.apiaries.every(apiary => apiary.name && apiary.number && apiary.locationId)
+              ? 'bg-green-600 hover:bg-green-700' 
+              : 'bg-gray-300 cursor-not-allowed'
+          }`}
+        >
+          <Package className="h-4 w-4 inline mr-2" />
+          Create Batch
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
       {notification.show && (
         <div className="fixed bottom-4 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-lg max-w-md z-50">
@@ -959,71 +1229,145 @@ useEffect(() => {
         </div>
       )}
       {/* Token Wallet Section */}
-      <div className="bg-white p-4 rounded-lg shadow text-black">
-        <h2 className="text-lg font-semibold mb-4">Token Wallet Overview</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="border rounded-lg p-4 bg-gray-50">
-            <h3 className="text-md font-semibold mb-3">Token Distribution</h3>
-            <div className="flex flex-wrap justify-between mb-4">
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-blue-500 mr-2"></div>
-                  <p className="text-sm font-medium">Origin certified</p>
-                </div>
-                <p className="text-xl font-bold">{data.tokenStats.originOnly} tokens</p>
-                <p className="text-xs text-gray-500">Applied to {data.tokenStats.originOnly} kg of honey</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-green-500 mr-2"></div>
-                  <p className="text-sm font-medium">Quality certified</p>
-                </div>
-                <p className="text-xl font-bold">{data.tokenStats.qualityOnly} tokens</p>
-                <p className="text-xs text-gray-500">Applied to {data.tokenStats.qualityOnly} kg of honey</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-purple-500 mr-2"></div>
-                  <p className="text-sm font-medium">Origin and Quality certified</p>
-                </div>
-                <p className="text-xl font-bold">{data.tokenStats.bothCertifications * 2} tokens</p>
-                <p className="text-xs text-gray-500">Applied to {data.tokenStats.bothCertifications} kg of honey</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg shadow mb-2 w-full md:w-5/12">
-                <div className="flex items-center mb-1">
-                  <div className="h-3 w-3 rounded-full bg-gray-400 mr-2"></div>
-                  <p className="text-sm font-medium">Remaining Tokens</p>
-                </div>
-                <p className="text-xl font-bold">{data.tokenStats.remainingTokens} tokens</p>
-                <p className="text-xs text-gray-500">Available for use</p>
-              </div>
+<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  {/* Token Wallet Section - Adjusted for equal height */}
+  <div className="bg-white p-4 rounded-lg shadow text-black h-fit">
+    <h2 className="text-lg font-semibold mb-4">Token Wallet Overview</h2>
+    <div className="space-y-6">
+      <div className="border rounded-lg p-4 bg-gray-50">
+        <h3 className="text-md font-semibold mb-3">Token Distribution</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="p-3 bg-white rounded-lg shadow">
+            <div className="flex items-center mb-1">
+              <div className="h-3 w-3 rounded-full bg-blue-500 mr-2"></div>
+              <p className="text-sm font-medium">Origin certified</p>
             </div>
+            <p className="text-xl font-bold">{data.tokenStats.originOnly} tokens</p>
+            <p className="text-xs text-gray-500">Applied to {data.tokenStats.originOnly} kg of honey</p>
           </div>
-          <div>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie
-                  data={tokenDistributionData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                  nameKey="name"
-                  label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
-                >
-                  {tokenDistributionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => `${value} tokens`} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="p-3 bg-white rounded-lg shadow">
+            <div className="flex items-center mb-1">
+              <div className="h-3 w-3 rounded-full bg-green-500 mr-2"></div>
+              <p className="text-sm font-medium">Quality certified</p>
+            </div>
+            <p className="text-xl font-bold">{data.tokenStats.qualityOnly} tokens</p>
+            <p className="text-xs text-gray-500">Applied to {data.tokenStats.qualityOnly} kg of honey</p>
+          </div>
+          <div className="p-3 bg-white rounded-lg shadow">
+            <div className="flex items-center mb-1">
+              <div className="h-3 w-3 rounded-full bg-gray-400 mr-2"></div>
+              <p className="text-sm font-medium">Remaining Tokens</p>
+            </div>
+            <p className="text-xl font-bold">{data.tokenStats.remainingTokens} tokens</p>
+            <p className="text-xs text-gray-500">Available for use</p>
           </div>
         </div>
       </div>
+      <div className="flex justify-center">
+        <ResponsiveContainer width="100%" height={250}>
+          <PieChart>
+            <Pie
+              data={tokenDistributionData}
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={80}
+              fill="#8884d8"
+              dataKey="value"
+              nameKey="name"
+              label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+            >
+              {tokenDistributionData.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={entry.color} />
+              ))}
+            </Pie>
+            <Tooltip formatter={(value) => `${value} tokens`} />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  </div>
+
+  {/* Google Maps Section - Same height */}
+  <div className="bg-white p-4 rounded-lg shadow text-black h-fit">
+    <h2 className="text-lg font-semibold mb-4">Apiary Locations</h2>
+    <p className="text-sm text-gray-600 mb-3">Click on the map to create a batch for that location</p>
+    <div 
+      ref={mapRef} 
+      className="w-full rounded-lg border border-gray-300 cursor-pointer"
+      style={{ height: '450px' }}
+    />
+  </div>
+</div>
+
+{/* Location Confirmation Modal */}
+{showLocationConfirm && selectedLocation && (
+  <>
+    {/* Invisible backdrop for click-outside-to-close */}
+    <div 
+      className="fixed inset-0 z-40"
+      onClick={handleLocationCancel}
+    />
+    
+    {/* Comic bubble popup positioned exactly at click location */}
+    <div 
+      className="fixed z-50 pointer-events-none"
+      style={{
+        left: `${clickPosition.x}px`,
+        top: `${clickPosition.y}px`,
+        transform: 'translate(-50%, -100%)', // Center horizontally, position above click point
+      }}
+    >
+      <div className="relative pointer-events-auto">
+        {/* Comic bubble with tail pointing down to click location */}
+        <div className="bg-white rounded-2xl p-4 shadow-2xl border-4 border-blue-400 max-w-xs relative transform hover:scale-105 transition-transform duration-200 mb-2">
+          
+          {/* Bubble content */}
+          <div className="text-center">
+            <div className="text-2xl mb-2">📍</div>
+            <h3 className="font-bold text-lg text-gray-800 mb-2">Save Apiary Location?</h3>
+            <p className="text-sm text-gray-600 mb-1">
+              Lat: {selectedLocation.lat.toFixed(4)}
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              Lng: {selectedLocation.lng.toFixed(4)}
+            </p>
+            <p className="text-xs text-gray-500 mb-4">
+              Save this location for future batch creation?
+            </p>
+            
+            <div className="flex space-x-2">
+              <button
+                onClick={handleLocationCancel}
+                className="flex-1 px-3 py-2 text-xs bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+  onClick={handleLocationConfirm}
+  disabled={isSaving}
+  className="flex-1 px-3 py-2 text-xs bg-blue-400 text-white rounded-full hover:bg-blue-500 transition-colors font-semibold flex items-center justify-center disabled:opacity-50"
+>
+  <MapPin className="w-3 h-3 mr-1" />
+  {isSaving ? 'Saving...' : 'Save!'}
+</button>
+            </div>
+          </div>
+        </div>
+        
+        {/* Bubble tail pointing down to exact click location */}
+        <div className="absolute left-1/2 transform -translate-x-1/2 -bottom-1">
+          {/* Outer tail (border color) */}
+          <div className="w-0 h-0 border-l-[15px] border-r-[15px] border-t-[20px] border-l-transparent border-r-transparent border-t-blue-400" />
+          {/* Inner tail (background color) */}
+          <div className="absolute w-0 h-0 border-l-[12px] border-r-[12px] border-t-[16px] border-l-transparent border-r-transparent border-t-white top-0 left-1/2 transform -translate-x-1/2" />
+        </div>
+      </div>
+    </div>
+  </>
+)}
+     
       {/* Certification Evolution Chart Section */}
 <div className="bg-white p-4 rounded-lg shadow text-black mb-6">
   <div className="flex justify-between items-center mb-4">
@@ -1130,15 +1474,6 @@ useEffect(() => {
         />
         <Line 
           type="monotone" 
-          dataKey="bothCertifications" 
-          name="Fully Certified" 
-          stroke="#8B5CF6" 
-          strokeWidth={3}
-          dot={false}
-          activeDot={{ r: 6 }}
-        />
-        <Line 
-          type="monotone" 
           dataKey="uncertified" 
           name="Uncertified" 
           stroke="#9CA3AF" 
@@ -1164,12 +1499,6 @@ useEffect(() => {
       </p>
     </div>
     <div className="text-center">
-      <p className="text-gray-500">Fully Certified</p>
-      <p className="text-2xl font-bold">
-        {filteredBatches.reduce((total, batch) => total + Number(batch.bothCertifications || 0), 0)} kg
-      </p>
-    </div>
-    <div className="text-center">
       <p className="text-gray-500">Uncertified</p>
       <p className="text-2xl font-bold">
         {filteredBatches.reduce((total, batch) => total + Number(batch.uncertified || 0), 0)} kg
@@ -1178,7 +1507,7 @@ useEffect(() => {
   </div>
 </div>
 
-   {/* Batch Certification Status Section */}
+  {/* Batch Certification Status Section */}
 <div className="bg-white p-4 rounded-lg shadow text-black">
   <div className="flex justify-between items-center mb-4">
     <h2 className="text-lg font-semibold">Batch Certification Status</h2>
@@ -1379,17 +1708,15 @@ useEffect(() => {
                     <div className="relative w-40 h-40">
                       {/* Calculate percentages from actual data or default to 0 */}
                       {(() => {
-                        // Calculate actual percentages from batch data
+                        // Calculate actual percentages from batch data (removed bothCertifications)
                         const originOnly = batch.originOnly || 0;
                         const qualityOnly = batch.qualityOnly || 0;
-                        const bothCertifications = batch.bothCertifications || 0;
                         const uncertified = batch.uncertified || 0;
-                        const total = originOnly + qualityOnly + bothCertifications + uncertified;
+                        const total = originOnly + qualityOnly + uncertified;
                         
                         // Calculate percentages (handle division by zero)
                         const originOnlyPercent = total > 0 ? Math.round((originOnly / total) * 100) : 0;
                         const qualityOnlyPercent = total > 0 ? Math.round((qualityOnly / total) * 100) : 0;
-                        const bothCertificationsPercent = total > 0 ? Math.round((bothCertifications / total) * 100) : 0;
                         const uncertifiedPercent = total > 0 ? Math.round((uncertified / total) * 100) : 0;
                         
                         return (
@@ -1436,21 +1763,6 @@ useEffect(() => {
                                   />
                                 )}
                                 
-                                {/* Fully Certified - Purple segment */}
-                                {bothCertificationsPercent > 0 && (
-                                  <circle
-                                    cx="50"
-                                    cy="50"
-                                    r="40"
-                                    fill="transparent"
-                                    stroke="#8b5cf6"
-                                    strokeWidth="16"
-                                    strokeDasharray={`${bothCertificationsPercent * 2.51} 251`}
-                                    strokeDashoffset={`${-(originOnlyPercent + qualityOnlyPercent) * 2.51}`}
-                                    strokeLinecap="butt"
-                                  />
-                                )}
-                                
                                 {/* Uncertified - Gray segment */}
                                 {uncertifiedPercent > 0 && (
                                   <circle
@@ -1461,7 +1773,7 @@ useEffect(() => {
                                     stroke="#9ca3af"
                                     strokeWidth="16"
                                     strokeDasharray={`${uncertifiedPercent * 2.51} 251`}
-                                    strokeDashoffset={`${-(originOnlyPercent + qualityOnlyPercent + bothCertificationsPercent) * 2.51}`}
+                                    strokeDashoffset={`${-(originOnlyPercent + qualityOnlyPercent) * 2.51}`}
                                     strokeLinecap="butt"
                                   />
                                 )}
@@ -1481,13 +1793,11 @@ useEffect(() => {
                       {(() => {
                         const originOnly = batch.originOnly || 0;
                         const qualityOnly = batch.qualityOnly || 0;
-                        const bothCertifications = batch.bothCertifications || 0;
                         const uncertified = batch.uncertified || 0;
-                        const total = originOnly + qualityOnly + bothCertifications + uncertified;
+                        const total = originOnly + qualityOnly + uncertified;
                         
                         const originOnlyPercent = total > 0 ? Math.round((originOnly / total) * 100) : 0;
                         const qualityOnlyPercent = total > 0 ? Math.round((qualityOnly / total) * 100) : 0;
-                        const bothCertificationsPercent = total > 0 ? Math.round((bothCertifications / total) * 100) : 0;
                         const uncertifiedPercent = total > 0 ? Math.round((uncertified / total) * 100) : 0;
                         
                         return (
@@ -1504,13 +1814,6 @@ useEffect(() => {
                               <div className="absolute right-0 top-1/2 transform translate-x-2 -translate-y-1/2 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
                                 <span>←</span>
                                 <span className="ml-1">{qualityOnlyPercent}%</span>
-                              </div>
-                            )}
-                            
-                            {bothCertificationsPercent > 0 && (
-                              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-2 bg-purple-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center">
-                                <span>↑</span>
-                                <span className="ml-1">{bothCertificationsPercent}%</span>
                               </div>
                             )}
                             
@@ -1532,24 +1835,21 @@ useEffect(() => {
                   <h3 className="text-md font-semibold mb-3">Certification Progress</h3>
                   <div className="flex flex-wrap justify-between mb-4">
                     {(() => {
-                      // Calculate jar counts from actual data
+                      // Calculate jar counts from actual data (removed bothCertifications)
                       const originOnly = batch.originOnly || 0;
                       const qualityOnly = batch.qualityOnly || 0;
-                      const bothCertifications = batch.bothCertifications || 0;
                       const uncertified = batch.uncertified || 0;
-                      const total = originOnly + qualityOnly + bothCertifications + uncertified;
+                      const total = originOnly + qualityOnly + uncertified;
                       
                       // Calculate percentages
                       const originOnlyPercent = total > 0 ? Math.round((originOnly / total) * 100) : 0;
                       const qualityOnlyPercent = total > 0 ? Math.round((qualityOnly / total) * 100) : 0;
-                      const bothCertificationsPercent = total > 0 ? Math.round((bothCertifications / total) * 100) : 0;
                       const uncertifiedPercent = total > 0 ? Math.round((uncertified / total) * 100) : 0;
                       
                       // Calculate jar counts
                       const totalJars = batch.jarsUsed || 0;
                       const originOnlyJars = total > 0 ? Math.round(originOnly * totalJars / total) : 0;
                       const qualityOnlyJars = total > 0 ? Math.round(qualityOnly * totalJars / total) : 0;
-                      const bothCertificationsJars = total > 0 ? Math.round(bothCertifications * totalJars / total) : 0;
                       const uncertifiedJars = total > 0 ? Math.round(uncertified * totalJars / total) : 0;
                       
                       const certificationData = [
@@ -1566,13 +1866,6 @@ useEffect(() => {
                           value: qualityOnly,
                           percent: qualityOnlyPercent,
                           jars: qualityOnlyJars
-                        },
-                        {
-                          color: "bg-purple-500",
-                          label: "Fully Certified",
-                          value: bothCertifications,
-                          percent: bothCertificationsPercent,
-                          jars: bothCertificationsJars
                         },
                         {
                           color: "bg-gray-400",
@@ -1652,7 +1945,6 @@ useEffect(() => {
     </div>
   )}
 </div>
-
       {/* Buy Tokens Modal */}
       {showBuyTokensModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30">

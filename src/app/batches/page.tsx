@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Menu, X, Search, ChevronDown, ChevronUp, Printer, PlusCircle, Check, AlertCircle, MapPin, Package, RefreshCw, Filter, ArrowLeft, Upload, Trash2, AlertTriangle, CheckCircle, Wallet, Plus } from 'lucide-react';
+import { Menu, X, Search, ChevronDown, ChevronUp, Printer, PlusCircle, Check, AlertCircle, MapPin, Package, RefreshCw, Filter, ArrowLeft, Upload, Trash2, AlertTriangle, CheckCircle, Wallet, Plus, Home, Layers, Activity, Users, Settings, HelpCircle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useRouter } from 'next/navigation';
 
@@ -111,6 +111,52 @@ const [jarSizeDistribution, setJarSizeDistribution] = useState({
   jar400g: 0,
   jar600g: 0
 });
+const isFormValid = () => {
+  // Check if we have jars defined
+  const totalJars = getTotalJarsAcrossApiaries();
+  if (totalJars === 0) return false;
+  
+  // Check if all jar types have certifications selected
+  const allJarsHaveCertifications = Object.values(apiaryJars).flat().every(jar => 
+    jarCertifications[jar.id]?.selectedType
+  );
+  if (!allJarsHaveCertifications) return false;
+  
+  // Check token balance
+  if (tokenCalculation.remaining < 0) return false;
+  
+  // Check required documents
+  if (needsProductionReport() && !formData.productionReport) return false;
+  if (needsLabReport() && !formData.labReport) return false;
+  
+  // Check if all apiaries have valid coordinates
+  const allApiariesHaveLocation = formData.apiaries.every(apiary => 
+    apiary.latitude && apiary.longitude
+  );
+  if (!allApiariesHaveLocation) return false;
+  
+  return true;
+};
+
+const isAllHoneyAllocated = () => {
+  const totalHoneyAvailable = getTotalHoneyFromApiaries();
+  const totalHoneyInJars = Object.values(apiaryJars).flat().reduce((sum, jar) => 
+    sum + (jar.size * jar.quantity / 1000), 0
+  );
+  return Math.abs(totalHoneyAvailable - totalHoneyInJars) < 0.001; // Allow for small floating point differences
+};
+
+// 2. Add helper function to check remaining honey for specific apiary
+const getRemainingHoneyForApiary = (apiaryIndex: number) => {
+  const apiary = formData.apiaries[apiaryIndex];
+  const jarsForApiary = getJarsForApiary(apiaryIndex);
+  const allocatedHoney = jarsForApiary.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0);
+  return apiary.kilosCollected - allocatedHoney;
+};
+
+const isApiaryFullyAllocated = (apiaryIndex: number) => {
+  return Math.abs(getRemainingHoneyForApiary(apiaryIndex)) < 0.001;
+};
 
 
 const calculateTotalHoneyToCertify = (amounts) => {
@@ -609,24 +655,34 @@ useEffect(() => {
  const handleCompleteBatch = async (e) => {
   e.preventDefault();
   const tokensUsed = tokenCalculation.tokensNeeded;
-    setTokenBalance(prevBalance => prevBalance - tokensUsed);
-  if (!formData.certificationType) {
-    alert('Please select a certification type');
+  setTokenBalance(prevBalance => prevBalance - tokensUsed);
+
+  // Check if all jars have certification types selected
+  const allJarsHaveCertifications = Object.values(apiaryJars).flat().every(jar => 
+    jarCertifications[jar.id]?.selectedType
+  );
+  
+  if (!allJarsHaveCertifications) {
+    alert('Please select a certification type for all jar types');
     return;
-
   }
-
-  // Validate required files based on certification type
-  const needsProductionReport = formData.certificationType === 'origin' || formData.certificationType === 'both';
-  const needsLabReport = formData.certificationType === 'quality' || formData.certificationType === 'both';
-
+  
+  // Check required documents based on selected certifications
+  const needsProductionReport = Object.values(jarCertifications).some(cert => 
+    cert?.selectedType === 'origin' || cert?.selectedType === 'both'
+  );
+  
+  const needsLabReport = Object.values(jarCertifications).some(cert => 
+    cert?.selectedType === 'quality' || cert?.selectedType === 'both'
+  );
+  
   if (needsProductionReport && !formData.productionReport) {
-    alert('Production report is required for this certification type');
+    alert('Please upload a production report for origin/both certifications');
     return;
   }
-
+  
   if (needsLabReport && !formData.labReport) {
-    alert('Lab report is required for this certification type');
+    alert('Please upload a lab report for quality/both certifications');
     return;
   }
 
@@ -659,7 +715,8 @@ useEffect(() => {
         batchId,
         updatedFields: {
           status: 'Completed',
-          certificationType: formData.certificationType,
+          // Store jar certifications instead of single certification type
+          jarCertifications: jarCertifications,
           certificationDate: new Date().toISOString().split('T')[0],
           // Add expiry date (e.g., 2 years from certification)
           expiryDate: new Date(Date.now() + 2 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -709,33 +766,33 @@ useEffect(() => {
 
     // ✅ Update local state with new apiary values
     const updatedBatches: Batch[] = batches.map(batch => {
-  if (selectedBatches.includes(batch.id) && batch.apiaries && batch.apiaries.length > 0) {
-    return {
-      ...batch,
-      status: 'completed' as const, // Type assertion to match expected status type
-      certificationType: formData.certificationType,
-      apiaries: batch.apiaries.map(apiary => {
-        const storedValue = apiaryHoneyValues[`${batch.id}-${apiary.number}`];
+      if (selectedBatches.includes(batch.id) && batch.apiaries && batch.apiaries.length > 0) {
         return {
-          ...apiary,
-          kilosCollected: storedValue !== undefined ? storedValue : apiary.kilosCollected
-        };
-      })
-    } as Batch; // Explicit type assertion
-  }
-  return batch;
-});
+          ...batch,
+          status: 'completed' as const, // Type assertion to match expected status type
+          jarCertifications: jarCertifications, // Store jar certifications instead of single type
+          apiaries: batch.apiaries.map(apiary => {
+            const storedValue = apiaryHoneyValues[`${batch.id}-${apiary.number}`];
+            return {
+              ...apiary,
+              kilosCollected: storedValue !== undefined ? storedValue : apiary.kilosCollected
+            };
+          })
+        } as Batch; // Explicit type assertion
+      }
+      return batch;
+    });
 
-setBatches(updatedBatches);
-// Remove duplicate setBatches call
-setShowCompleteForm(false);
-setSelectedBatches([]);
-setFormData({
-  certificationType: '',
-  productionReport: null,
-  labReport: null,
-  apiaries: []
-});
+    setBatches(updatedBatches);
+    // Remove duplicate setBatches call
+    setShowCompleteForm(false);
+    setSelectedBatches([]);
+    setFormData({
+      certificationType: '',
+      productionReport: null,
+      labReport: null,
+      apiaries: []
+    });
 
     // ✅ Success notification
     setNotification({
@@ -754,6 +811,8 @@ setFormData({
 
   } catch (error) {
     console.error('Error completing batches:', error);
+    // Restore token balance on error
+    setTokenBalance(prevBalance => prevBalance + tokensUsed);
     setNotification({
       show: true,
       message: error.message,
@@ -763,7 +822,6 @@ setFormData({
     setIsLoading(false);
   }
 };
-
 
 
   // Handle adding a new apiary to the form
@@ -1129,29 +1187,55 @@ const getTotalJarsAcrossApiaries = () => {
 // Helper function to add jar to specific apiary
 const addJarToApiary = (apiaryIndex: number) => {
   const newJar = newJarForApiary[apiaryIndex];
-  if (!newJar || newJar.size <= 0 || newJar.quantity <= 0) return;
-  
+  const jarSize = newJar?.size;
+  const jarQuantity = newJar?.quantity || 1;
+
+  if (!jarSize || jarSize <= 0) return;
+
+  const remainingHoney = getRemainingHoneyForApiary(apiaryIndex);
+  const requiredHoney = (jarSize * jarQuantity) / 1000;
+
+  if (requiredHoney > remainingHoney + 0.001) {
+    alert(
+      `Cannot add ${jarQuantity} jars of ${jarSize}g. Only ${remainingHoney.toFixed(
+        2
+      )} kg of honey remaining for this apiary.`
+    );
+    return;
+  }
+
   const apiary = formData.apiaries[apiaryIndex];
   const currentJarsForApiary = getJarsForApiary(apiaryIndex);
-  const currentTotalWeight = currentJarsForApiary.reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0);
-  const newJarWeight = (newJar.size * newJar.quantity) / 1000;
-  
+  const currentTotalWeight = currentJarsForApiary.reduce(
+    (sum, jar) => sum + (jar.size * jar.quantity) / 1000,
+    0
+  );
+
+  const newJarWeight = (jarSize * jarQuantity) / 1000;
+
   if (currentTotalWeight + newJarWeight <= apiary.kilosCollected) {
     setApiaryJars({
       ...apiaryJars,
       [apiaryIndex]: [
         ...currentJarsForApiary,
-        { ...newJar, id: Date.now(), apiaryIndex }
-      ]
+        {
+          id: Date.now(),
+          size: jarSize,
+          quantity: jarQuantity,
+          apiaryIndex,
+        },
+      ],
     });
-    
-    // Reset new jar input for this apiary
+
+    // Reset the new jar input for this apiary
     setNewJarForApiary({
       ...newJarForApiary,
-      [apiaryIndex]: { size: 0, quantity: 1 }
+      [apiaryIndex]: { size: 0, quantity: 1 },
     });
   } else {
-    alert(`Cannot add jars. Total weight would exceed honey available for this apiary (${apiary.kilosCollected} kg)`);
+    alert(
+      `Cannot add jars. Total weight would exceed honey available for this apiary (${apiary.kilosCollected} kg)`
+    );
   }
 };
 
@@ -1200,38 +1284,74 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
   return (
     <div className="flex flex-col space-y-6 p-6 min-h-screen bg-gradient-to-b from-yellow-200 to-white text-black">
       {/* Sidebar */}
-      <div className={`fixed top-0 left-0 h-full bg-gray-800 text-white transition-all duration-300 ease-in-out z-20 ${sidebarOpen ? 'w-64' : 'w-0'} overflow-hidden`}>
-        <div className="p-4 flex justify-between items-center">
-          <h2 className="text-xl font-bold">Menu</h2>
-          <button onClick={toggleSidebar} className="p-1 hover:bg-gray-700 rounded">
-            <X className="h-6 w-6" />
-          </button>
-        </div>
-        <nav className="mt-8">
-          <ul className="space-y-2">
-            <li>
-              <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
-                <ArrowLeft className="h-5 w-5 mr-3" />
-                Back to Dashboard
-              </a>
-            </li>
-            <li>
-              <a href="#" className="flex items-center px-4 py-3 bg-gray-700">
-                <Package className="h-5 w-5 mr-3" />
-                Batches
-              </a>
-            </li>
-          </ul>
-        </nav>
-      </div>
-      
-      {/* Backdrop overlay when sidebar is open */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-10"
-          onClick={toggleSidebar}
-        ></div>
-      )}
+<div className={`fixed top-0 left-0 h-full bg-gray-800 text-white transition-all duration-300 ease-in-out z-20 ${sidebarOpen ? 'w-64' : 'w-0'} overflow-hidden`}>
+  <div className="p-4 flex justify-between items-center">
+    <h2 className="text-xl font-bold">Menu</h2>
+    <button onClick={toggleSidebar} className="p-1 hover:bg-gray-700 rounded">
+      <X className="h-6 w-6" />
+    </button>
+  </div>
+  <nav className="mt-8">
+    <ul className="space-y-2">
+      <li>
+        <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Home className="h-5 w-5 mr-3" />
+          Dashboard
+        </a>
+      </li>
+      <li>
+        <a href="/batches"
+         onClick={(e) => {
+    e.preventDefault();
+    // For a React app with routing, you could use:
+    router.push('/batches');
+  }}
+         className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Layers className="h-5 w-5 mr-3" />
+          Batches
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Activity className="h-5 w-5 mr-3" />
+          Analytics
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Wallet className="h-5 w-5 mr-3" />
+          Token Wallet
+        </a>
+      </li>
+      <li>
+        <a href="/profile" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Users className="h-5 w-5 mr-3" />
+          Profile
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <Settings className="h-5 w-5 mr-3" />
+          Settings
+        </a>
+      </li>
+      <li>
+        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
+          <HelpCircle className="h-5 w-5 mr-3" />
+          Help
+        </a>
+      </li>
+    </ul>
+  </nav>
+</div>
+
+{/* Backdrop overlay when sidebar is open - now with blur effect */}
+{sidebarOpen && (
+  <div 
+    className="fixed inset-0 backdrop-blur-sm bg-black/20 z-10"
+    onClick={toggleSidebar}
+  ></div>
+)}
       
       {/* Header */}
 <header className="bg-white p-4 rounded-lg shadow text-black">
@@ -1852,49 +1972,60 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
 
           {/* Token Balance Display */}
           <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <Wallet className="h-6 w-6 text-yellow-600 mr-3" />
-                <div>
-                  <h4 className="font-medium text-yellow-800">Your Token Balance</h4>
-                  <p className="text-2xl font-bold text-yellow-900">{tokenBalance} tokens</p>
-                </div>
-              </div>
-              <div className="text-right">
-  <p className="text-sm text-yellow-700">Tokens Needed: {tokenCalculation.tokensNeeded}</p>
-  <p className={`font-bold ${tokenCalculation.remaining >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-    Remaining: {tokenCalculation.remaining} tokens
-  </p>
+  <div className="flex items-center justify-between">
+    <div className="flex items-center">
+      <Wallet className="h-6 w-6 text-yellow-600 mr-3" />
+      <div>
+        <h4 className="font-medium text-yellow-800">Your Token Balance</h4>
+        <div className="flex items-center space-x-2">
+          <p className="text-2xl font-bold text-yellow-900">{tokenBalance}</p>
+          {getTotalJarsAcrossApiaries() > 0 && (
+            <>
+              <span className="text-gray-400">→</span>
+              <p className="text-2xl font-bold text-green-600">
+                {Math.max(0, tokenBalance - getTotalJarsAcrossApiaries())}
+              </p>
+              <span className="text-sm text-gray-500">(after completion)</span>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+    <div className="text-right">
+      <p className="text-sm text-yellow-700">Tokens Needed: {getTotalJarsAcrossApiaries()}</p>
+      <p className={`font-bold ${tokenBalance - getTotalJarsAcrossApiaries() >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        Remaining: {tokenBalance - getTotalJarsAcrossApiaries()} tokens
+      </p>
+    </div>
+  </div>
+  <div className="flex justify-between items-center mt-3">
+    <div className="text-sm text-yellow-700">
+      Need more tokens? 
+    </div>
+    <button
+      type="button"
+      onClick={() => router.push('/buy-token')}
+      className="px-3 py-1 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 flex items-center text-sm"
+    >
+      <PlusCircle className="h-4 w-4 mr-1" />
+      Buy Tokens
+    </button>
+  </div>
+  {tokenBalance - getTotalJarsAcrossApiaries() < 0 && (
+    <div className="mt-3 p-3 bg-red-100 border border-red-300 rounded-md">
+      <p className="text-red-700 text-sm">
+        ⚠️ Insufficient tokens! You need {Math.abs(tokenBalance - getTotalJarsAcrossApiaries())} more tokens.
+        <button
+          type="button"
+          onClick={() => router.push('/buy-token')}
+          className="ml-2 underline hover:no-underline"
+        >
+          Buy tokens now
+        </button>
+      </p>
+    </div>
+  )}
 </div>
-            </div>
-            <div className="flex justify-between items-center mt-3">
-              <div className="text-sm text-yellow-700">
-                Need more tokens? 
-              </div>
-              <button
-                type="button"
-                onClick={() => router.push('/buy-token')}
-                className="px-3 py-1 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 flex items-center text-sm"
-              >
-                <PlusCircle className="h-4 w-4 mr-1" />
-                Buy Tokens
-              </button>
-            </div>
-            {tokenCalculation.remaining < 0 && (
-              <div className="mt-3 p-3 bg-red-100 border border-red-300 rounded-md">
-                <p className="text-red-700 text-sm">
-                  ⚠️ Insufficient tokens! You need {Math.abs(tokenCalculation.remaining)} more tokens.
-                  <button
-                    type="button"
-                    onClick={() => router.push('/buy-token')}
-                    className="ml-2 underline hover:no-underline"
-                  >
-                    Buy tokens now
-                  </button>
-                </p>
-              </div>
-            )}
-          </div>
 
           {/* Custom Jar Definition Section */}
           <div className="border rounded-md p-4 mb-4">
@@ -1904,58 +2035,79 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
   </p>
 
   {formData.apiaries.map((apiary, apiaryIndex) => (
-    <div key={apiaryIndex} className="border rounded-md p-4 mb-6 bg-gray-50">
-      <h5 className="font-medium mb-3 text-lg">
-        {apiary.name} ({apiary.number})
-        <span className="ml-2 text-sm font-normal text-blue-600">
-          Available: {apiary.kilosCollected} kg
-        </span>
-      </h5>
+  <div key={apiaryIndex} className="border rounded-md p-4 mb-6 bg-gray-50">
+    <h5 className="font-medium mb-3 text-lg">
+      {apiary.name} ({apiary.number})
+      <span className="ml-2 text-sm font-normal text-blue-600">
+        Available: {apiary.kilosCollected} kg
+      </span>
+    </h5>
 
-      {/* Add New Jar Form for this apiary */}
-      <div className="bg-white p-4 rounded-lg mb-4">
-        <h6 className="font-medium mb-3">Add Jars for This Apiary</h6>
+    {/* Add New Jar Form */}
+    <div className={`bg-white p-4 rounded-lg mb-4 ${isApiaryFullyAllocated(apiaryIndex) ? 'opacity-50' : ''}`}>
+      <h6 className="font-medium mb-3">
+        Add Jars for This Apiary
+        {isApiaryFullyAllocated(apiaryIndex) && (
+          <span className="ml-2 text-sm text-green-600 font-normal">
+            ✓ All honey allocated
+          </span>
+        )}
+      </h6>
+
+      {!isApiaryFullyAllocated(apiaryIndex) ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Jar Size (grams)
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Jar Size (grams)</label>
             <input
               type="number"
               min="1"
               step="1"
               value={newJarForApiary[apiaryIndex]?.size || 0}
-              onChange={(e) => setNewJarForApiary({
-                ...newJarForApiary,
-                [apiaryIndex]: {
-                  ...newJarForApiary[apiaryIndex],
-                  size: parseInt(e.target.value) || 0,
-                  quantity: newJarForApiary[apiaryIndex]?.quantity || 1
-                }
-              })}
+              onChange={(e) =>
+                setNewJarForApiary({
+                  ...newJarForApiary,
+                  [apiaryIndex]: {
+                    ...newJarForApiary[apiaryIndex],
+                    size: parseInt(e.target.value) || 0,
+                    quantity: newJarForApiary[apiaryIndex]?.quantity || 1,
+                  },
+                })
+              }
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="e.g., 250, 400, 850"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Quantity
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
             <input
               type="number"
               min="1"
+              max={Math.floor(
+                getRemainingHoneyForApiary(apiaryIndex) * 1000 /
+                  (newJarForApiary[apiaryIndex]?.size || 1)
+              )}
               value={newJarForApiary[apiaryIndex]?.quantity || 1}
-              onChange={(e) => setNewJarForApiary({
-                ...newJarForApiary,
-                [apiaryIndex]: {
-                  ...newJarForApiary[apiaryIndex],
-                  size: newJarForApiary[apiaryIndex]?.size || 0,
-                  quantity: parseInt(e.target.value) || 1
-                }
-              })}
+              onChange={(e) =>
+                setNewJarForApiary({
+                  ...newJarForApiary,
+                  [apiaryIndex]: {
+                    ...newJarForApiary[apiaryIndex],
+                    size: newJarForApiary[apiaryIndex]?.size || 0,
+                    quantity: parseInt(e.target.value) || 1,
+                  },
+                })
+              }
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="How many jars"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Max:{' '}
+              {Math.floor(
+                getRemainingHoneyForApiary(apiaryIndex) * 1000 /
+                  (newJarForApiary[apiaryIndex]?.size || 1)
+              )}{' '}
+              jars
+            </p>
           </div>
           <div className="flex items-end">
             <button
@@ -1964,7 +2116,7 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
               disabled={!newJarForApiary[apiaryIndex]?.size}
               className={`w-full px-4 py-2 rounded-md flex items-center justify-center ${
                 newJarForApiary[apiaryIndex]?.size > 0
-                  ? 'bg-blue-500 hover:bg-blue-600 text-white' 
+                  ? 'bg-blue-500 hover:bg-blue-600 text-white'
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
             >
@@ -1973,79 +2125,116 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Display Current Jars for this apiary */}
-      {getJarsForApiary(apiaryIndex).length > 0 && (
-        <div className="space-y-3">
-          <h6 className="font-medium">Defined Jars for This Apiary</h6>
-          {getJarsForApiary(apiaryIndex).map((jar) => (
-            <div key={jar.id} className="flex items-center justify-between p-3 bg-white border rounded-md">
-              <div className="flex items-center space-x-4">
-                <div className="text-sm">
-                  <span className="font-medium">{jar.quantity}x {jar.size}g jars</span>
-                  <span className="text-gray-500 ml-2">
-                    = {((jar.size * jar.quantity) / 1000).toFixed(2)} kg total
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => removeJarFromApiary(apiaryIndex, jar.id)}
-                className="text-red-500 hover:text-red-700"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-          
-          {/* Apiary Summary */}
-          <div className="bg-blue-50 p-3 rounded-lg">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-              <div>
-                <span className="text-gray-600">Total Jars:</span>
-                <span className="ml-2 font-bold">{getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + jar.quantity, 0)}</span>
-              </div>
-              <div>
-                <span className="text-gray-600">Total Weight:</span>
-                <span className="ml-2 font-bold">
-                  {(getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0)).toFixed(2)} kg
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-600">Remaining:</span>
-                <span className="ml-2 font-bold text-green-600">
-                  {(apiary.kilosCollected - getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + (jar.size * jar.quantity / 1000), 0)).toFixed(2)} kg
-                </span>
-              </div>
-            </div>
+      ) : (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <Check className="h-5 w-5 text-green-600 mr-2" />
+            <p className="text-green-800 font-medium">
+              All honey from this apiary has been allocated to jars
+            </p>
           </div>
-        </div>
-      )}
-
-      {getJarsForApiary(apiaryIndex).length === 0 && (
-        <div 
-          className="border border-dashed border-gray-300 rounded-md p-4 text-center cursor-pointer hover:bg-gray-50"
-          onClick={() => {
-            if (!newJarForApiary[apiaryIndex]) {
-              setNewJarForApiary({
-                ...newJarForApiary,
-                [apiaryIndex]: { size: 250, quantity: 1 }
-              });
-            }
-          }}
-        >
-          <PlusCircle className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-          <p className="text-gray-500">Click to add jars for this apiary</p>
+          <p className="text-green-600 text-sm mt-1">
+            Delete some jars if you want to create different jar configurations
+          </p>
         </div>
       )}
     </div>
-  ))}
+
+    {/* Jars list */}
+    {getJarsForApiary(apiaryIndex).length > 0 && (
+      <div className="space-y-3">
+        <h6 className="font-medium">Defined Jars for This Apiary</h6>
+        {getJarsForApiary(apiaryIndex).map((jar) => (
+          <div key={jar.id} className="flex items-center justify-between p-3 bg-white border rounded-md">
+            <div className="flex items-center space-x-4">
+              <div className="text-sm">
+                <span className="font-medium">{jar.quantity}x {jar.size}g jars</span>
+                <span className="text-gray-500 ml-2">
+                  = {((jar.size * jar.quantity) / 1000).toFixed(2)} kg total
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => removeJarFromApiary(apiaryIndex, jar.id)}
+              className="text-red-500 hover:text-red-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+
+        <div className={`p-3 rounded-lg ${isApiaryFullyAllocated(apiaryIndex) ? 'bg-green-50 border border-green-200' : 'bg-blue-50'}`}>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <span className="text-gray-600">Total Jars:</span>
+              <span className="ml-2 font-bold">
+                {getJarsForApiary(apiaryIndex).reduce((sum, jar) => sum + jar.quantity, 0)}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-600">Total Weight:</span>
+              <span className="ml-2 font-bold">
+                {getJarsForApiary(apiaryIndex)
+                  .reduce((sum, jar) => sum + (jar.size * jar.quantity) / 1000, 0)
+                  .toFixed(2)}{' '}
+                kg
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-600">Remaining:</span>
+              <span className={`ml-2 font-bold ${isApiaryFullyAllocated(apiaryIndex) ? 'text-green-600' : 'text-blue-600'}`}>
+                {getRemainingHoneyForApiary(apiaryIndex).toFixed(2)} kg
+                {isApiaryFullyAllocated(apiaryIndex) && (
+                  <span className="ml-1 text-green-500">✓</span>
+                )}
+              </span>
+            </div>
+          </div>
+          {isApiaryFullyAllocated(apiaryIndex) && (
+            <div className="mt-2 text-center">
+              <span className="text-green-700 text-sm font-medium">
+                🎯 Perfect allocation! All honey from this apiary is assigned to jars.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Empty placeholder if no jars defined */}
+    {getJarsForApiary(apiaryIndex).length === 0 && !isApiaryFullyAllocated(apiaryIndex) && (
+      <div
+        className="border border-dashed border-gray-300 rounded-md p-4 text-center cursor-pointer hover:bg-gray-50"
+        onClick={() => {
+          if (!newJarForApiary[apiaryIndex]) {
+            setNewJarForApiary({
+              ...newJarForApiary,
+              [apiaryIndex]: { size: 250, quantity: 1 },
+            });
+          }
+        }}
+      >
+        <PlusCircle className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+        <p className="text-gray-500">Click to add jars for this apiary</p>
+      </div>
+    )}
+  </div>
+))}
+
 
   {/* Overall Summary */}
   {Object.keys(apiaryJars).length > 0 && (
-    <div className="bg-yellow-50 p-4 rounded-lg">
-      <h5 className="font-medium mb-2">Overall Summary</h5>
+    <div className={`p-4 rounded-lg ${isAllHoneyAllocated() ? 'bg-green-50 border border-green-200' : 'bg-yellow-50'}`}>
+    <div className="flex items-center justify-between mb-2">
+      <h5 className="font-medium">Overall Summary</h5>
+      {isAllHoneyAllocated() && (
+        <span className="flex items-center text-green-600 text-sm font-medium">
+          <Check className="h-4 w-4 mr-1" />
+          Complete Allocation
+        </span>
+      )}
+    </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
         <div>
           <span className="text-gray-600">Total Jars:</span>
@@ -2526,31 +2715,17 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
               Cancel
             </button>
             <button
-              type="submit"
-              disabled={
-                calculateTotalHoneyToCertify(certificationAmounts) === 0 ||
-                tokenCalculation.remaining < 0 ||
-                !tokenCalculation.isValid ||
-                tokenCalculation.hasExceededJars ||
-                calculateTotalHoneyToCertify(certificationAmounts) > getTotalHoneyFromApiaries() ||
-                ((certificationAmounts.origin > 0 || certificationAmounts.both > 0) && !formData.productionReport) ||
-                ((certificationAmounts.quality > 0 || certificationAmounts.both > 0) && !formData.labReport)
-              }
-              className={`px-4 py-2 rounded-md flex items-center ${
-                calculateTotalHoneyToCertify(certificationAmounts) > 0 &&
-                tokenCalculation.remaining >= 0 &&
-                tokenCalculation.isValid &&
-                !tokenCalculation.hasExceededJars &&
-                calculateTotalHoneyToCertify(certificationAmounts) <= getTotalHoneyFromApiaries() &&
-                ((certificationAmounts.origin === 0 && certificationAmounts.both === 0) || formData.productionReport) &&
-                ((certificationAmounts.quality === 0 && certificationAmounts.both === 0) || formData.labReport)
-                  ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              <Check className="h-4 w-4 mr-2" />
-              Complete & Pay {tokenCalculation.tokensNeeded} Tokens
-            </button>
+  type="submit"
+  disabled={!isFormValid()}
+  className={`px-4 py-2 rounded-md flex items-center ${
+    isFormValid()
+      ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+  }`}
+>
+  <Check className="h-4 w-4 mr-2" />
+  Complete & Pay {tokenCalculation.tokensNeeded} Tokens
+</button>
           </div>
         </div>
       </form>

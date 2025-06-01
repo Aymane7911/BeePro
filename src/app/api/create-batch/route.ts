@@ -88,8 +88,9 @@ export async function GET(request: Request) {
 }
 
 // POST: Create a new batch for logged-in user
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    // Authentication check
     const authHeader = request.headers.get('Authorization');
     console.log('[POST] Raw Authorization header:', authHeader);
 
@@ -107,17 +108,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'Unauthorized: Invalid token' }, { status: 401 });
     }
 
-    const body: BatchRequestBody = await request.json();
+    const body = await request.json();
     const { batchNumber, batchName, apiaries = [] } = body;
 
+    // Validate required fields
     if (!batchNumber) {
       return NextResponse.json({ message: 'Batch number is required' }, { status: 400 });
     }
-
-    // Generate batch name with timestamp if not provided
-    const finalBatchName = batchName && batchName.trim() 
-      ? batchName.trim() 
-      : `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
 
     // Validate apiaries data if provided
     if (apiaries.length > 0) {
@@ -130,7 +127,12 @@ export async function POST(request: Request) {
       }
     }
 
-    // 🔒 Check for duplicate batch number
+    // Generate batch name with timestamp if not provided
+    const finalBatchName = batchName && batchName.trim() 
+      ? batchName.trim() 
+      : `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
+
+    // Check for duplicate batch number
     const existingBatch = await prisma.batch.findFirst({
       where: { batchNumber, userId },
     });
@@ -139,8 +141,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'Batch number already exists' }, { status: 409 });
     }
 
-    // Create batch with apiaries
-    const newBatch = await prisma.batch.create({
+    // Create the batch
+    const batch = await prisma.batch.create({
       data: {
         user: { connect: { id: userId } },
         batchNumber,
@@ -161,35 +163,60 @@ export async function POST(request: Request) {
       },
     });
 
-    // 2. Create related Apiaries with validation
+    // Handle apiaries - either create new ones or update existing saved locations
+    const createdApiaries = [];
+    
     if (apiaries.length > 0) {
-      const validatedApiaries = apiaries.map((apiary) => {
-        // Validate and convert each apiary's data
-        const hiveCount = apiary.hiveCount ? parseInt(String(apiary.hiveCount)) : 0;
-        const kilosCollected = apiary.kilosCollected ? parseFloat(String(apiary.kilosCollected)) : 0;
-        const latitude = apiary.latitude ? parseFloat(String(apiary.latitude)) : 0;
-        const longitude = apiary.longitude ? parseFloat(String(apiary.longitude)) : 0;
+      for (const apiaryData of apiaries) {
+        if (apiaryData.locationId) {
+          // Update existing saved location with batch info
+          const updatedApiary = await prisma.apiary.update({
+            where: { id: parseInt(apiaryData.locationId) },
+            data: {
+              name: apiaryData.name,
+              number: apiaryData.number,
+              hiveCount: apiaryData.hiveCount ? parseInt(String(apiaryData.hiveCount)) : 0,
+              kilosCollected: apiaryData.kilosCollected ? parseFloat(String(apiaryData.kilosCollected)) : 0,
+              batchId: batch.id,
+            },
+          });
+          createdApiaries.push(updatedApiary);
+        } else {
+          // Create new apiary without saved location
+          // Validate and convert numeric values
+          const hiveCount = apiaryData.hiveCount ? parseInt(String(apiaryData.hiveCount)) : 0;
+          const kilosCollected = apiaryData.kilosCollected ? parseFloat(String(apiaryData.kilosCollected)) : 0;
+          const latitude = apiaryData.latitude ? parseFloat(String(apiaryData.latitude)) : 0;
+          const longitude = apiaryData.longitude ? parseFloat(String(apiaryData.longitude)) : 0;
 
-        // Check for NaN values
-        if (isNaN(hiveCount) || isNaN(kilosCollected) || isNaN(latitude) || isNaN(longitude)) {
-          throw new Error(`Invalid numeric values in apiary: ${apiary.name}`);
+          // Check for NaN values
+          if (isNaN(hiveCount) || isNaN(kilosCollected) || isNaN(latitude) || isNaN(longitude)) {
+            throw new Error(`Invalid numeric values in apiary: ${apiaryData.name}`);
+          }
+
+          const newApiary = await prisma.apiary.create({
+            data: {
+              name: apiaryData.name || '',
+              number: apiaryData.number || '',
+              hiveCount,
+              kilosCollected,
+              latitude,
+              longitude,
+              batchId: batch.id,
+            },
+          });
+          createdApiaries.push(newApiary);
         }
-
-        return {
-          name: apiary.name || '',
-          number: apiary.number || '',
-          hiveCount,
-          kilosCollected,
-          latitude,
-          longitude,
-          batchId: newBatch.id,
-        };
-      });
-
-      await prisma.apiary.createMany({
-        data: validatedApiaries,
-      });
+      }
     }
+
+    // Return the complete batch with apiaries
+    const completeBatch = await prisma.batch.findUnique({
+      where: { id: batch.id },
+      include: {
+        apiaries: true,
+      },
+    });
 
     // Fetch updated batches list
     const batches = await prisma.batch.findMany({
@@ -199,10 +226,10 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ 
-      batch: newBatch, 
-      batchNumber: newBatch.batchNumber,
+      batch: completeBatch, 
+      batchNumber: completeBatch.batchNumber,
       batches // Include updated batches list if needed
-    });
+    }, { status: 201 });
 
   } catch (error) {
     console.error('[POST] Error creating batch:', error);

@@ -27,9 +27,12 @@ model beeusers {
   passportFile      String?  @map("passport_file")
   phoneConfirmed    String?  @map("phone_confirmed")
   isProfileComplete Boolean  @default(false)
-
+  googleId          String?  @unique @map("google_id")
   batches           Batch[]
   tokenStats        TokenStats?
+  // NextAuth fields
+  accounts Account[]
+  sessions Session[]
 
   @@map("beeusers")
 }
@@ -86,7 +89,42 @@ model Apiary {
   longitude  Float
   kilosCollected  Float  @default(0)
 
-  batchId    String
-  batch      Batch   @relation(fields: [batchId], references: [id])
+  batchId    String?
+  batch      Batch?   @relation(fields: [batchId], references: [id])
+  createdAt  DateTime @default(now())
+}
+ // NextAuth.js Models
+model Account {
+  id                String  @id @default(cuid())
+  userId            Int
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user beeusers @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
 }
 
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       Int
+  expires      DateTime
+  user         beeusers @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
