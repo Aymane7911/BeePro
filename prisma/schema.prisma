@@ -14,25 +14,26 @@ datasource db {
 }
 
 model beeusers {
-  id                Int      @id @default(autoincrement()) @map("id")
-  firstname         String   @map("firstname")
-  lastname          String   @map("lastname")
-  email             String   @unique @map("email")
-  phonenumber       String?  @unique @map("phonenumber")
-  password          String   @map("password")
-  createdAt         DateTime @default(now()) @map("created_at")
-  confirmationToken String?  @map("confirmation_token")
-  isConfirmed       Boolean  @default(false) @map("is_confirmed")
-  passportId        String?  @map("passport_id")
-  passportFile      String?  @map("passport_file")
-  phoneConfirmed    String?  @map("phone_confirmed")
-  isProfileComplete Boolean  @default(false)
-  googleId          String?  @unique @map("google_id")
+  id                Int         @id @default(autoincrement()) @map("id")
+  firstname         String      @map("firstname")
+  lastname          String      @map("lastname")
+  email             String      @unique @map("email")
+  phonenumber       String?     @unique @map("phonenumber")
+  password          String      @map("password")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  confirmationToken String?     @map("confirmation_token")
+  isConfirmed       Boolean     @default(false) @map("is_confirmed")
+  passportId        String?     @map("passport_id")
+  passportFile      String?     @map("passport_file")
+  phoneConfirmed    String?     @map("phone_confirmed")
+  isProfileComplete Boolean     @default(false)
+  googleId          String?     @unique @map("google_id")
   batches           Batch[]
   tokenStats        TokenStats?
   // NextAuth fields
-  accounts Account[]
-  sessions Session[]
+  accounts          Account[]
+  sessions          Session[]
+  Apiary            Apiary[]
 
   @@map("beeusers")
 }
@@ -64,36 +65,42 @@ model Batch {
   updatedAt                 DateTime @updatedAt
   userId                    Int
 
-  user                      beeusers @relation(fields: [userId], references: [id])
-  apiaries                  Apiary[]
+  user     beeusers @relation(fields: [userId], references: [id])
+  apiaries Apiary[]
 }
 
 model TokenStats {
-  id                 String   @id @default(uuid())
-  userId             Int      @unique
-  totalTokens        Int      @default(0)
-  remainingTokens    Int      @default(0)
-  originOnly         Float    @default(0)
-  qualityOnly        Float    @default(0)
-  bothCertifications Float    @default(0)
+  id                 String @id @default(uuid())
+  userId             Int    @unique
+  totalTokens        Int    @default(0)
+  remainingTokens    Int    @default(0)
+  originOnly         Float  @default(0)
+  qualityOnly        Float  @default(0)
+  bothCertifications Float  @default(0)
 
-  beeusers           beeusers @relation(fields: [userId], references: [id])
+  beeusers beeusers @relation(fields: [userId], references: [id])
 }
 
 model Apiary {
-  id         Int     @id @default(autoincrement())
-  name       String
-  number     String
-  hiveCount  Int
-  latitude   Float
-  longitude  Float
-  kilosCollected  Float  @default(0)
+  id             Int    @id @default(autoincrement())
+  name           String
+  number         String
+  hiveCount      Int
+  latitude       Float
+  longitude      Float
+  kilosCollected Float  @default(0)
 
-  batchId    String?
-  batch      Batch?   @relation(fields: [batchId], references: [id])
-  createdAt  DateTime @default(now())
+  batchId   String?
+  batch     Batch?   @relation(fields: [batchId], references: [id])
+  createdAt DateTime @default(now())
+
+  // Add user association
+  // Add user association
+  userId Int
+  user   beeusers @relation(fields: [userId], references: [id])
 }
- // NextAuth.js Models
+
+// NextAuth.js Models
 model Account {
   id                String  @id @default(cuid())
   userId            Int

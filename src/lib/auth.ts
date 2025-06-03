@@ -126,9 +126,9 @@ export const authOptions: NextAuthOptions = {
 /**
  * Extracts and validates user ID from various token types including NextAuth JWT tokens
  * @param {string} token - The authentication token
- * @returns {string | null} - User ID if valid, null if invalid
+ * @returns {Promise<string | null>} - User ID if valid, null if invalid
  */
-export function getUserIdFromToken(token: string): string | null {
+export async function getUserIdFromToken(token: string): Promise<string | null> {
   try {
     if (!token) {
       console.warn('[getUserIdFromToken] No token provided');
@@ -152,10 +152,29 @@ export function getUserIdFromToken(token: string): string | null {
         const decoded = jwt.decode(cleanToken) as any;
         console.log('[getUserIdFromToken] Decoded JWT payload:', decoded);
 
-        // Handle NextAuth JWT tokens
+        // Handle NextAuth JWT tokens - get user ID from email
         if (decoded?.email) {
-          // For NextAuth tokens, we'll use email to find the user ID
-          return `nextauth_${decoded.email}`;
+          console.log('[getUserIdFromToken] Using email from JWT:', decoded.email);
+          
+          // Look up the actual user ID in the database
+          const dbUser = await prisma.beeusers.findUnique({
+            where: { email: decoded.email },
+            select: { id: true }
+          });
+          
+          if (dbUser) {
+            console.log('[getUserIdFromToken] Found database user ID:', dbUser.id);
+            return dbUser.id.toString();
+          } else {
+            console.warn('[getUserIdFromToken] No database user found for email:', decoded.email);
+            return null;
+          }
+        }
+
+        // Handle custom JWT tokens with userId
+        if (decoded?.userId) {
+          console.log('[getUserIdFromToken] Using userId from JWT:', decoded.userId);
+          return decoded.userId.toString();
         }
 
         // If you have JWT_SECRET, verify the token
@@ -163,11 +182,42 @@ export function getUserIdFromToken(token: string): string | null {
           const secret = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET!;
           const verified = jwt.verify(cleanToken, secret) as any;
           console.log('[getUserIdFromToken] Verified JWT:', verified);
-          return verified.userId || verified.sub || verified.id || verified.email;
+          
+          // Handle verified token with email
+          if (verified.email) {
+            const dbUser = await prisma.beeusers.findUnique({
+              where: { email: verified.email },
+              select: { id: true }
+            });
+            
+            if (dbUser) {
+              return dbUser.id.toString();
+            }
+          }
+          
+          // Handle verified token with userId
+          if (verified.userId) {
+            return verified.userId.toString();
+          }
+          
+          // Handle other verified token formats
+          return verified.sub || verified.id;
         } else {
           // If no JWT_SECRET, use decoded payload (less secure, for development)
           console.warn('[getUserIdFromToken] No JWT_SECRET found, using unverified token');
-          return decoded.userId || decoded.sub || decoded.id || decoded.email;
+          
+          if (decoded.email) {
+            const dbUser = await prisma.beeusers.findUnique({
+              where: { email: decoded.email },
+              select: { id: true }
+            });
+            
+            if (dbUser) {
+              return dbUser.id.toString();
+            }
+          }
+          
+          return decoded.userId || decoded.sub || decoded.id;
         }
       } catch (jwtError: any) {
         console.error('[getUserIdFromToken] JWT verification failed:', jwtError.message);
@@ -177,7 +227,20 @@ export function getUserIdFromToken(token: string): string | null {
           const decoded = jwt.decode(cleanToken) as any;
           if (decoded && typeof decoded === 'object') {
             console.log('[getUserIdFromToken] Using decoded JWT:', decoded);
-            return decoded.sub || decoded.email || decoded.userId || decoded.id;
+            
+            // Handle decoded token with email
+            if (decoded.email) {
+              const dbUser = await prisma.beeusers.findUnique({
+                where: { email: decoded.email },
+                select: { id: true }
+              });
+              
+              if (dbUser) {
+                return dbUser.id.toString();
+              }
+            }
+            
+            return decoded.userId || decoded.sub || decoded.id;
           }
         } catch (decodeError: any) {
           console.error('[getUserIdFromToken] JWT decode failed:', decodeError.message);
@@ -257,7 +320,7 @@ export async function getUserIdFromAuth(request?: Request | string): Promise<str
     }
 
     if (authHeader) {
-      const userId = getUserIdFromToken(authHeader);
+      const userId = await getUserIdFromToken(authHeader);
       if (userId?.startsWith('nextauth_')) {
         // Convert NextAuth email-based ID to actual user ID
         const email = userId.replace('nextauth_', '');
@@ -308,7 +371,7 @@ export async function verifyGoogleToken(token: string): Promise<any | null> {
  */
 export async function getUserIdFromTokenAsync(token: string): Promise<string | null> {
   try {
-    const syncResult = getUserIdFromToken(token);
+    const syncResult = await getUserIdFromToken(token);
     
     // If it's a Google OAuth token, verify with Google
     if (syncResult && syncResult.startsWith('google_')) {
@@ -391,7 +454,7 @@ export async function authenticateRequest(authHeaderOrRequest?: string | Request
     }
 
     const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
-    const userId = getUserIdFromToken(token);
+    const userId = await getUserIdFromToken(token);
 
     // Convert NextAuth email-based ID to actual user ID
     if (userId?.startsWith('nextauth_')) {

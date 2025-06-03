@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin } from 'lucide-react';
+import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 // Define your interfaces here, right after imports
@@ -14,13 +14,37 @@ interface TokenStats {
   totalTokens: number;
 }
 
-interface ApiaryLocation {
+interface SelectedApiary extends Apiary {
+  kilosCollected: number; // Override to ensure this is always present
+}
+
+interface ApiaryLocation extends LocationCoordinates {
   id: number;
   name: string;
   latitude: number;
   longitude: number;
   createdAt?: string;
 }
+
+interface Apiary {
+  id: string;
+  name: string;
+  number: string;
+  hiveCount: number;
+  location: ApiaryLocation;
+}
+
+interface LocationCoordinates {
+  lat: number;
+  lng: number;
+}
+
+
+interface ClickPosition {
+  x: number;
+  y: number;
+}
+
 interface CertifiedHoneyWeight {
   originOnly: number;
   qualityOnly: number;
@@ -103,6 +127,14 @@ const tokenDistributionData = [];
 
 
 
+
+
+
+
+
+
+
+
 // Honey certification status data
 const honeyStatusData = [];
 
@@ -118,11 +150,43 @@ export default function JarManagementDashboard() {
   const [tokensToAdd, setTokensToAdd] = useState(100);
   // Add these state variables to your existing component
   const [showLocationConfirm, setShowLocationConfirm] = useState(false);
-  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [selectedLocation, setSelectedLocation] = useState<LocationCoordinates | null>(null);
   const mapRef = useRef(null);
-  const googleMapRef = useRef(null);
+  const googleMapRef = useRef<google.maps.Map | null>(null);
   const googleMapsApiKey = "AIzaSyBhRpOpnKWIXGMOTsdVoGKAnAC94Q0Sgxc"; 
   const [savedApiaryLocations, setSavedApiaryLocations] = useState<ApiaryLocation[]>([]);
+  const [showApiaryModal, setShowApiaryModal] = useState(false);
+  const [availableApiaries, setAvailableApiaries] = useState<Apiary[]>([]); // List of all created apiaries
+  const [isLoadingApiaries, setIsLoadingApiaries] = useState(false);
+  const [selectedApiaries, setSelectedApiaries] = useState<SelectedApiary[]>([]); // Selected apiaries for current batch
+  const [locations, setLocations] = useState<ApiaryLocation[]>([]);
+  const [apiaryFormData, setApiaryFormData] = useState<{
+  name: string;
+  number: string;
+  hiveCount: number;
+  honeyCollected: number;
+  location: ApiaryLocation | null;
+}>({
+  name: '',
+  number: '',
+  hiveCount: 0,
+  honeyCollected: 0,
+  location: null
+});
+  
+// Function to create authenticated API headers
+  const getAuthHeaders = (): Record<string, string> => {
+  const token = getAuthToken();
+  const headers: { [key: string]: string } = {
+  'Content-Type': 'application/json',
+};
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  return headers;
+};
   // 1. Add clickPosition state to track where user clicked for bubble positioning
   const [clickPosition, setClickPosition] = useState({ x: 0, y: 0 });
   const [batchFormData, setBatchFormData] = useState({
@@ -131,7 +195,8 @@ export default function JarManagementDashboard() {
         name: '',
         number: '',
         hiveCount: 0,
-        kilosCollected: 0
+        kilosCollected: 0,
+        locationId: ''
       }
     ],
     containerType: 'Glass',
@@ -152,6 +217,7 @@ export default function JarManagementDashboard() {
       apiaries: [
         ...batchFormData.apiaries,
         {
+          locationId:'',
           name: '',
           number: '',
           hiveCount: 0,
@@ -169,7 +235,397 @@ export default function JarManagementDashboard() {
       apiaries: updatedApiaries
     });
   };
-  const [isSaving, setIsSaving] = useState(false);
+
+  function getAuthToken() {
+  // Replace this with however you store your JWT token
+  // Could be localStorage, sessionStorage, cookies, context, etc.
+  return localStorage.getItem('authToken') || localStorage.getItem('token');
+}
+
+// Function to make authenticated API requests
+async function makeAuthenticatedRequest(url, options = {}) {
+  const token = getAuthToken();
+  
+  if (!token) {
+    throw new Error('No authentication token found. Please log in.');
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+    ...options.headers,
+  };
+
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
+
+  async function saveApiaryToDatabase(apiaryData: any) {
+  console.log('=== SAVING APIARY - AUTH DEBUG ===');
+  
+  // Get token from wherever it's stored (check all possible locations)
+  let token = null;
+  
+  // Check localStorage
+  if (typeof window !== 'undefined') {
+    token = localStorage.getItem('auth-token') || localStorage.getItem('token');
+    console.log('Token from localStorage:', token ? 'EXISTS' : 'NULL');
+  }
+  
+  // Check sessionStorage
+  if (!token && typeof window !== 'undefined') {
+    token = sessionStorage.getItem('auth-token') || sessionStorage.getItem('token');
+    console.log('Token from sessionStorage:', token ? 'EXISTS' : 'NULL');
+  }
+  
+  // Check cookies for auth-token
+  if (!token && typeof document !== 'undefined') {
+    const cookieMatch = document.cookie.match(/auth-token=([^;]+)/);
+    token = cookieMatch ? cookieMatch[1] : null;
+    console.log('Token from auth-token cookie:', token ? 'EXISTS' : 'NULL');
+  }
+  
+  // Check for NextAuth session token in cookies
+  if (!token && typeof document !== 'undefined') {
+    const nextAuthMatch = document.cookie.match(/next-auth\.session-token=([^;]+)/);
+    token = nextAuthMatch ? nextAuthMatch[1] : null;
+    console.log('NextAuth session token:', token ? 'EXISTS' : 'NULL');
+  }
+  
+  console.log('All cookies:', document.cookie);
+  
+  // Prepare headers
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  
+  // Add Authorization header if we have a JWT token
+  if (token && token.includes('.')) { // JWT has dots
+    headers['Authorization'] = `Bearer ${token}`;
+    console.log('Added Authorization header with JWT');
+  }
+  
+  const response = await fetch('/api/apiaries', {
+    method: 'POST',
+    headers,
+    credentials: 'include', // This is crucial for session-based auth
+    body: JSON.stringify(apiaryData)
+  });
+
+  console.log('POST Response status:', response.status);
+  console.log('POST Response headers:', Object.fromEntries(response.headers.entries()));
+  
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error('POST API Error:', errorData);
+    throw new Error(errorData.message || errorData.error || 'Failed to save apiary');
+  }
+
+  return await response.json();
+}
+
+const refreshApiariesFromDatabase = async () => {
+  try {
+    console.log('=== REFRESH APIARIES DEBUG ===');
+    
+    // Get the JWT token the same way as your save function
+    let token = null;
+    
+    if (typeof window !== 'undefined') {
+      token = localStorage.getItem('auth-token') || 
+               sessionStorage.getItem('auth-token');
+    }
+    
+    if (!token && typeof document !== 'undefined') {
+      token = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('auth-token='))
+        ?.split('=')[1];
+    }
+    
+    console.log('Token for refresh:', token ? 'exists' : 'missing');
+    
+    // Create headers with token (same as save function)
+    const headers: { [key: string]: string } = {
+  'Content-Type': 'application/json',
+};
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await fetch('/api/apiaries', {
+      method: 'GET',
+      credentials: 'include',
+      headers, // Include the Authorization header
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Refresh API Error:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText
+      });
+      throw new Error(`Failed to fetch apiaries: ${response.status} ${response.statusText}`);
+    }
+    
+    const apiaries = await response.json();
+    console.log('Fetched apiaries:', apiaries);
+    
+    setAvailableApiaries(apiaries);
+    console.log('Apiaries list refreshed successfully!');
+    
+  } catch (error: unknown) {
+  console.error('Error refreshing apiaries:', error);
+  
+  if (error instanceof Error) {
+    if (
+      error.message.includes('401') ||
+      error.message.toLowerCase().includes('authentication')
+    ) {
+      console.error('Authentication failed during refresh');
+      // Optionally redirect:
+      // window.location.href = '/login';
+    }
+  } else {
+    // If you want to catch non-Error throwables:
+    console.error('Unexpected error:', error);
+  }
+}
+};
+// You should also add a useEffect to load apiaries when the component mounts:
+useEffect(() => {
+  refreshApiariesFromDatabase();
+}, []);
+  const createApiary = async () => {
+  if (!apiaryFormData.name || !apiaryFormData.number || !apiaryFormData.location) {
+    setNotification({
+      show: true,
+      message: 'Please fill in all required fields and set a location',
+    });
+    setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+    return;
+  }
+
+  // Check if apiary number already exists (with safe array check)
+  if (Array.isArray(availableApiaries) && availableApiaries.some(apiary => apiary.number === apiaryFormData.number)) {
+    setNotification({
+      show: true,
+      message: 'An apiary with this number already exists',
+    });
+    setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const token = localStorage.getItem("token") || localStorage.getItem('authToken') || localStorage.getItem('auth-token');
+    if (!token) {
+      throw new Error("No token found. Please log in again.");
+    }
+
+    // Create clean data to avoid circular references
+    const newApiaryData = {
+      name: String(apiaryFormData.name).trim(),
+      number: String(apiaryFormData.number).trim(),
+      hiveCount: Number(apiaryFormData.hiveCount) || 0,
+      location: {
+        latitude: Number(apiaryFormData.location.latitude),
+        longitude: Number(apiaryFormData.location.longitude),
+        // Include location ID if it exists (for existing locations)
+        ...(apiaryFormData.location.id && { locationId: apiaryFormData.location.id })
+      },
+      kilosCollected: Number(apiaryFormData.honeyCollected) || 0
+    };
+
+    console.log('Sending clean apiary data to API:', newApiaryData);
+
+    const response = await fetch('/api/apiaries', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      credentials: 'include',
+      body: JSON.stringify(newApiaryData),
+    });
+
+    console.log('Response status:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API Error Response:', errorText);
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch {
+        errorData = { message: errorText || 'Failed to create apiary' };
+      }
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log('Apiary created successfully:', result);
+
+    // Add the new apiary to available apiaries list with clean data
+    const newApiary = result.apiary || result;
+    const cleanApiary = {
+      id: newApiary.id,
+      name: newApiary.name,
+      number: newApiary.number,
+      hiveCount: Number(newApiary.hiveCount) || 0,
+      location: {
+        id: newApiary.location?.id,
+        name: newApiary.location?.name,
+        latitude: Number(newApiary.location?.latitude),
+        longitude: Number(newApiary.location?.longitude)
+      }
+    };
+
+    if (Array.isArray(availableApiaries)) {
+      setAvailableApiaries(prev => [cleanApiary, ...prev]);
+    } else {
+      setAvailableApiaries([cleanApiary]);
+    }
+
+    // Store the success message before resetting form
+    const successMessage = `Apiary "${apiaryFormData.name}" created successfully!`;
+
+    // Reset form with clean initial state
+    setApiaryFormData({
+      name: '',
+      number: '',
+      hiveCount: 0,
+      honeyCollected: 0,
+      location: null
+    });
+
+    // Close modal
+    setShowApiaryModal(false);
+
+    setNotification({
+      show: true,
+      message: successMessage,
+    });
+
+    setTimeout(() => {
+      setNotification({ show: false, message: '' });
+    }, 3000);
+
+    // Refresh the apiaries list
+    await refreshApiariesFromDatabase();
+
+  } catch (error) {
+    console.error('Error creating apiary:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    setNotification({
+      show: true,
+      message: `Error: ${errorMessage}`,
+    });
+
+    setTimeout(() => {
+      setNotification({ show: false, message: '' });
+    }, 5000);
+  } finally {
+    setLoading(false);
+  }
+};
+ const LocationConfirmDialog = () => (
+  showLocationConfirm && (
+    <div 
+      className="fixed bg-white border border-gray-300 rounded-lg shadow-lg p-4 z-50"
+      style={{
+        left: `${clickPosition.x}px`,
+        top: `${clickPosition.y}px`,
+        transform: 'translate(-50%, -100%)',
+        marginTop: '-10px'
+      }}
+    >
+      <div className="text-sm font-medium text-gray-900 mb-2">
+        Save this location?
+      </div>
+      <div className="text-xs text-gray-600 mb-3">
+        Lat: {selectedLocation?.lat.toFixed(6)}<br/>
+        Lng: {selectedLocation?.lng.toFixed(6)}
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleLocationConfirm();
+          }}
+          disabled={isSaving}
+          className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 disabled:opacity-50"
+        >
+          {isSaving ? 'Saving...' : 'Save'}
+        </button>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleLocationCancel();
+          }}
+          disabled={isSaving}
+          className="px-3 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+);
+
+// Add this component for displaying saved locations in the apiary modal
+const SavedLocationsSelector = () => (
+  savedApiaryLocations.length > 0 && (
+    <div className="mt-4">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Or select from saved locations:
+      </label>
+      <div className="max-h-32 overflow-y-auto space-y-1">
+        {savedApiaryLocations.map((location) => (
+          <button
+            key={location.id}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleSelectExistingLocation(location);
+            }}
+            className="w-full text-left px-3 py-2 text-sm bg-gray-50 hover:bg-gray-100 rounded border"
+          >
+            <div className="font-medium">{location.name}</div>
+            <div className="text-xs text-gray-500">
+              {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+);
+
+// Also add this helper function to clean location data
+const cleanLocationData = (location: any) => {
+  if (!location) return null;
+  
+  return {
+    id: location.id,
+    name: location.name,
+    latitude: Number(location.latitude),
+    longitude: Number(location.longitude),
+    lat: Number(location.latitude || location.lat),
+    lng: Number(location.longitude || location.lng),
+    createdAt: location.createdAt
+  };
+};
+
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   
 
@@ -456,8 +912,27 @@ const handleBuyTokens = () => {
 };
 
   const createBatch = async () => {
+  if (!batchNumber || selectedApiaries.length === 0) {
+    setNotification({
+      show: true,
+      message: 'Please fill in batch number and select at least one apiary',
+    });
+    setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+    return;
+  }
+
+  // Check if any selected apiary doesn't have honey collection amount set
+  if (selectedApiaries.some(apiary => !apiary.kilosCollected || apiary.kilosCollected <= 0)) {
+    setNotification({
+      show: true,
+      message: 'Please set honey collection amount for all selected apiaries',
+    });
+    setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+    return;
+  }
+
   setLoading(true);
-  
+
   try {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -465,14 +940,27 @@ const handleBuyTokens = () => {
     }
 
     // Generate batch name with timestamp if not provided
-    const finalBatchName = batchName && batchName.trim() 
-      ? batchName.trim() 
+    const finalBatchName = batchName && batchName.trim()
+      ? batchName.trim()
       : `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
+
+    // Transform selected apiaries to match the expected format
+    const apiariesForBatch = selectedApiaries.map(apiary => ({
+      id: apiary.id,
+      name: apiary.name,
+      number: apiary.number,
+      hiveCount: apiary.hiveCount,
+      kilosCollected: apiary.kilosCollected,
+      locationId: apiary.location?.id || null, // Use location ID if available
+      location: apiary.location // Include full location data
+    }));
 
     const formData = {
       batchNumber: batchNumber,
       batchName: finalBatchName,
-      apiaries: batchFormData.apiaries, // ✅ Include apiaries data
+      apiaries: apiariesForBatch, // Use transformed apiaries data
+      totalHives: selectedApiaries.reduce((sum, apiary) => sum + (apiary.hiveCount || 0), 0),
+      totalHoney: selectedApiaries.reduce((sum, apiary) => sum + (apiary.kilosCollected || 0), 0),
     };
 
     const response = await fetch('/api/create-batch', {
@@ -490,6 +978,7 @@ const handleBuyTokens = () => {
       throw new Error(result.message || 'Failed to create batch');
     }
 
+    // Update data state with new batch
     setData({
       ...data,
       batches: [result.batch, ...data.batches],
@@ -498,23 +987,19 @@ const handleBuyTokens = () => {
 
     setNotification({
       show: true,
-      message: `Batch ${batchNumber} created successfully with ${batchFormData.apiaries.length} apiaries!`,
+      message: `Batch ${batchNumber} created successfully with ${selectedApiaries.length} apiaries!`,
     });
 
     setTimeout(() => {
       setNotification({ show: false, message: '' });
     }, 5000);
 
-    // ✅ Reset form data properly
+    // Reset form data
     setBatchNumber('');
     setBatchName('');
-   setBatchFormData(prev => ({
-  ...prev,
-  apiaries: [{ name: '', number: '', hiveCount: 0, kilosCollected: 0 }]
-}));
-setShowBatchModal(false);
+    setSelectedApiaries([]);
+    setShowBatchModal(false);
 
-    
   } catch (error) {
     console.error('Error creating batch:', error);
     setNotification({
@@ -685,6 +1170,51 @@ useEffect(() => {
   setTokenBalance(savedBalance);
 }, []);
 
+// Add this useEffect to load saved locations when component mounts
+useEffect(() => {
+  const loadSavedData = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        console.error("No token found. Please log in again.");
+        return;
+      }
+
+      // Load saved locations
+      const locationsResponse = await fetch('/api/apiaries/locations', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      if (locationsResponse.ok) {
+        const locations = await locationsResponse.json();
+        setSavedApiaryLocations(locations);
+      } else {
+        console.error('Failed to load saved locations');
+      }
+
+      // Load available apiaries
+      const apiariesResponse = await fetch('/api/apiaries', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      if (apiariesResponse.ok) {
+        const apiaries = await apiariesResponse.json();
+        setAvailableApiaries(apiaries);
+      } else {
+        console.error('Failed to load available apiaries');
+      }
+
+    } catch (error) {
+      console.error('Error loading saved data:', error);
+    }
+  };
+
+  loadSavedData();
+}, []);
 
 useEffect(() => {
   const initMap = () => {
@@ -704,9 +1234,9 @@ useEffect(() => {
       googleMapRef.current = map;
 
       // Add click listener to map with precise position tracking
-      map.addListener('click', (event) => {
-        const lat = event.latLng.lat();
-        const lng = event.latLng.lng();
+      map.addListener('click', (event: google.maps.MapMouseEvent) => {
+        const lat = event.latLng?.lat();
+        const lng = event.latLng?.lng();
         
         // Get the exact pixel position of the click relative to the map container
         const mapRect = mapRef.current.getBoundingClientRect();
@@ -747,71 +1277,172 @@ useEffect(() => {
   }
 }, []);
 
+
+
 // Add these handler functions
-const handleLocationConfirm = async () => {
+const handleLocationConfirm = async (name: string | null = null) => {
   if (!selectedLocation) return;
-     
+
   try {
+    setIsSaving(true);
+    
+    const token = localStorage.getItem('token') || localStorage.getItem('authToken') || localStorage.getItem('auth-token');
+    
+    if (!token) {
+      setNotification({
+        show: true,
+        message: 'Authentication required. Please log in again.',
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+      return;
+    }
+
+    // Create clean location data (avoid circular references)
+    const locationData = {
+      latitude: Number(selectedLocation.lat),
+      longitude: Number(selectedLocation.lng),
+      name: name || `Location ${new Date().toLocaleDateString()}`,
+    };
+
+    console.log('Sending location data:', locationData); // Debug log
+
+     
     const response = await fetch('/api/apiaries/locations', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
       },
+      credentials: 'include',
+      
+      body: JSON.stringify(locationData)
+    });
+    console.log('→ payload about to be stringified:', locationData);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API Error Response:', errorText);
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch {
+        errorData = { error: errorText || 'Failed to save location' };
+      }
+      throw new Error(errorData.error || errorData.message || 'Failed to save location');
+    }
+
+    const newLocation = await response.json();
+    console.log('Location saved successfully:', newLocation);
+    
+    // Create clean location object for state updates
+    const cleanLocation = {
+      id: newLocation.id,
+      name: newLocation.name,
+      latitude: Number(newLocation.latitude),
+      longitude: Number(newLocation.longitude),
+      lat: Number(newLocation.latitude),
+      lng: Number(newLocation.longitude),
+      createdAt: newLocation.createdAt
+    };
+    
+    // Update the locations list
+    setLocations(prev => [cleanLocation, ...prev]);
+    setSavedApiaryLocations(prev => [cleanLocation, ...prev]);
+    
+    // If we're in the context of creating an apiary, set this as the selected location
+    if (showApiaryModal) {
+      setApiaryFormData(prev => ({
+        ...prev,
+        location: cleanLocation
+      }));
+    }
+    
+    // Close the confirmation dialog
+    setShowLocationConfirm(false);
+    setSelectedLocation(null);
+    
+    // Show success notification
+    setNotification({
+      show: true,
+      message: 'Location saved successfully!',
+    });
+    setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+    
+  } catch (error) {
+    console.error('Error saving location:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    setNotification({
+      show: true,
+      message: `Error saving location: ${errorMessage}`,
+    });
+    setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+
+const handleSelectExistingLocation = (location: ApiaryLocation) => {
+  setApiaryFormData(prev => ({
+    ...prev,
+    location: {
+      id: location.id,
+      name: location.name,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      lat: location.latitude,
+      lng: location.longitude
+    }
+  }));
+  
+  setNotification({
+    show: true,
+    message: `Location "${location.name}" selected for apiary`,
+  });
+  setTimeout(() => setNotification({ show: false, message: '' }), 2000);
+};
+
+
+// Alternative approach using the utility functions:
+const handleLocationConfirmWithUtils = async (name: string | null = null) => {
+  if (!selectedLocation) return;
+
+  try {
+    setIsSaving(true);
+    
+    const response = await makeAuthenticatedRequest('/api/apiaries/locations', {
+      method: 'POST',
       body: JSON.stringify({
         latitude: selectedLocation.lat,
         longitude: selectedLocation.lng,
-        name: `Location ${new Date().toLocaleString()}`,
+        name: name || `Location ${new Date().toLocaleDateString()}`,
       }),
     });
-         
-    if (response.ok) {
-      const newLocation = await response.json();
-      setSavedApiaryLocations(prev => [...prev, newLocation]);
-      
-      // Show success notification
-      setNotification({
-        show: true,
-        message: 'Apiary location saved successfully!'
-      });
-      
-      // Hide notification after 3 seconds
-      setTimeout(() => {
-        setNotification({ show: false, message: '' });
-      }, 3000);
-             
-      // Reset the modal state
-      setShowLocationConfirm(false);
-      setSelectedLocation(null);
-    } else {
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        // Redirect to login
+        window.location.href = '/login';
+        return;
+      }
       const errorData = await response.json();
-      console.error('API Error:', errorData);
-      
-      // Show error notification
-      setNotification({
-        show: true,
-        message: `Failed to save location: ${errorData.error || 'Unknown error'}`
-      });
-      
-      // Hide notification after 3 seconds
-      setTimeout(() => {
-        setNotification({ show: false, message: '' });
-      }, 3000);
+      throw new Error(errorData.error || 'Failed to save location');
     }
+
+    const newLocation = await response.json();
+    setLocations(prev => [newLocation, ...prev]);
+    setShowLocationConfirm(false);
+    setSelectedLocation(null);
+    alert('Location saved successfully!');
+    
   } catch (error) {
-    console.error('Error saving apiary location:', error);
-    
-    // Show error notification
-    setNotification({
-      show: true,
-      message: 'Failed to save apiary location'
-    });
-    
-    // Hide notification after 3 seconds
-    setTimeout(() => {
-      setNotification({ show: false, message: '' });
-    }, 3000);
+    console.error('Error saving location:', error);
+    alert('Failed to save location. Please try again.');
+  } finally {
+    setIsSaving(false);
   }
 };
+
 
 // Remove the unused saveApiaryLocation function
 const handleLocationCancel = () => {
@@ -956,10 +1587,10 @@ const handleLocationCancel = () => {
         </p>
       </header>
 
-      {/* Create Batch Modal */}
+     {/* Create Batch Modal */}
 {showBatchModal && (
   <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-30">
-    <div className="bg-white rounded-lg p-6 w-full max-w-3xl max-h-screen overflow-y-auto mx-4">
+    <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto mx-4">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-xl font-bold">Create New Batch</h3>
         <button
@@ -967,7 +1598,7 @@ const handleLocationCancel = () => {
             setShowBatchModal(false);
             setBatchNumber('');
             setBatchName('');
-            setBatchFormData({ apiaries: [{ name: '', number: '', hiveCount: 0, kilosCollected: 0, locationId: '' }] });
+            setSelectedApiaries([]);
           }}
           className="text-gray-500 hover:text-gray-700"
         >
@@ -1011,182 +1642,138 @@ const handleLocationCancel = () => {
         </div>
       </div>
 
-      {/* Associated Apiaries Section */}
+      {/* Select Apiaries Section */}
       <div className="mb-6">
         <div className="flex justify-between items-center mb-4">
-          <h4 className="font-medium text-lg">Associated Apiaries</h4>
+          <h4 className="font-medium text-lg">Select Apiaries</h4>
           <button
             type="button"
-            onClick={addApiary}
+            onClick={() => setShowApiaryModal(true)}
             className="flex items-center text-sm text-blue-600 hover:text-blue-800 px-3 py-1 rounded-md border border-blue-200 hover:bg-blue-50"
           >
             <PlusCircle className="h-4 w-4 mr-1" />
-            Add Apiary
+            Add New Apiary
           </button>
         </div>
 
-        {/* No Apiaries State */}
-        {batchFormData.apiaries.length === 0 && (
-          <div 
-            className="border border-dashed border-gray-300 rounded-md p-6 text-center cursor-pointer hover:bg-gray-50 mb-4"
-            onClick={addApiary}
-          >
-            <PlusCircle className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-            <p className="text-gray-500 font-medium">Click to add your first apiary</p>
-            <p className="text-xs text-gray-400 mt-1">You'll need at least one apiary to create a batch</p>
-          </div>
-        )}
-
-        {/* Saved Locations Info */}
-        {savedApiaryLocations.length === 0 && batchFormData.apiaries.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mb-4">
-            <div className="flex items-center">
-              <MapPin className="h-4 w-4 text-amber-600 mr-2" />
-              <p className="text-sm text-amber-800">
-                No saved locations available. Click on the map to save apiary locations first.
-              </p>
+        {/* Apiary Selection Dropdown */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Available Apiaries <span className="text-red-500">*</span>
+          </label>
+          
+          {isLoadingApiaries ? (
+            <div className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50">
+              <p className="text-gray-500">Loading apiaries...</p>
             </div>
-          </div>
-        )}
-
-        {/* Apiaries List */}
-        {batchFormData.apiaries.map((apiary, index) => (
-          <div key={index} className="border rounded-lg p-4 mb-4 bg-gray-50">
-            <div className="flex justify-between items-center mb-3">
-              <h5 className="font-medium text-gray-800">Apiary #{index + 1}</h5>
-              {batchFormData.apiaries.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeApiary(index)}
-                  className="text-red-500 hover:text-red-700 text-sm flex items-center"
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Remove
-                </button>
-              )}
+          ) : !Array.isArray(availableApiaries) || availableApiaries.length === 0 ? (
+            <div
+              className="border border-dashed border-gray-300 rounded-md p-6 text-center cursor-pointer hover:bg-gray-50"
+              onClick={() => setShowApiaryModal(true)}
+            >
+              <PlusCircle className="h-8 w-8 mx-auto text-gray-400 mb-2" />
+              <p className="text-gray-500 font-medium">No apiaries available</p>
+              <p className="text-xs text-gray-400 mt-1">Click to create your first apiary</p>
             </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Apiary Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={apiary.name}
-                  onChange={(e) => handleApiaryChange(index, 'name', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  placeholder="Enter apiary name"
-                  required
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Apiary Number/ID <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={apiary.number}
-                  onChange={(e) => handleApiaryChange(index, 'number', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  placeholder="Enter apiary ID"
-                  required
-                />
-              </div>
-              
-              {/* Location Dropdown */}
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Apiary Location <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={apiary.locationId || ''}
-                  onChange={(e) => handleApiaryChange(index, 'locationId', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  required
-                >
-                  <option value="">Select a saved location</option>
-                  {savedApiaryLocations.map(location => (
-                    <option key={location.id} value={location.id}>
-                      {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+          ) : (
+            <select
+              value=""
+              onChange={(e) => {
+                const apiaryId = e.target.value;
+                if (apiaryId && Array.isArray(selectedApiaries) && !selectedApiaries.find(a => a.id === apiaryId)) {
+                  const apiary = availableApiaries.find(a => a.id === apiaryId);
+                  if (apiary) {
+                    setSelectedApiaries(prev => [...prev, { ...apiary, kilosCollected: 0 }]);
+                  }
+                }
+                // Reset the select value
+                (e.target as HTMLSelectElement).value = "";
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            >
+              <option value="">Select an apiary to add...</option>
+              {Array.isArray(availableApiaries) && Array.isArray(selectedApiaries) && 
+                availableApiaries
+                  .filter(apiary => !selectedApiaries.find(selected => selected.id === apiary.id))
+                  .map(apiary => (
+                    <option key={apiary.id} value={apiary.id}>
+                      {apiary.name} (ID: {apiary.number}) - {apiary.hiveCount} hives
                     </option>
-                  ))}
-                </select>
-                {savedApiaryLocations.length === 0 && (
-                  <p className="text-xs text-amber-600 mt-1 flex items-center">
-                    <MapPin className="h-3 w-3 mr-1" />
-                    No saved locations. Click on the map to save apiary locations first.
-                  </p>
-                )}
-                {apiary.locationId && (
-                  <p className="text-xs text-green-600 mt-1 flex items-center">
-                    <CheckCircle className="h-3 w-3 mr-1" />
-                    Location selected successfully
-                  </p>
-                )}
+                  ))
+              }
+            </select>
+          )}
+        </div>
+
+        {/* Selected Apiaries List */}
+        {selectedApiaries.length > 0 && (
+          <div className="space-y-3">
+            <h5 className="font-medium text-gray-800">Selected Apiaries for this Batch:</h5>
+            {selectedApiaries.map((apiary, index) => (
+              <div key={apiary.id} className="border rounded-lg p-4 bg-gray-50">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h6 className="font-medium text-gray-800">{apiary.name}</h6>
+                    <p className="text-sm text-gray-600">ID: {apiary.number} | {apiary.hiveCount} hives</p>
+                    <p className="text-xs text-gray-500">
+                      Location: {apiary.location?.name || 'No location set'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedApiaries(prev => prev.filter(a => a.id !== apiary.id))}
+                    className="text-red-500 hover:text-red-700 text-sm flex items-center"
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Remove
+                  </button>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Honey Collected from this Apiary (kg) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={apiary.kilosCollected}
+                    onChange={(e) => {
+                      const newValue = parseFloat(e.target.value) || 0;
+                      setSelectedApiaries(prev => prev.map(a => 
+                        a.id === apiary.id ? { ...a, kilosCollected: newValue } : a
+                      ));
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    placeholder="0.0"
+                    required
+                  />
+                </div>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Number of Hives <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={apiary.hiveCount}
-                  onChange={(e) => handleApiaryChange(index, 'hiveCount', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  placeholder="0"
-                  required
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Honey Collected (kg) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={apiary.kilosCollected}
-                  onChange={(e) => handleApiaryChange(index, 'kilosCollected', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                  placeholder="0.0"
-                  required
-                />
-              </div>
-            </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
 
       {/* Summary Section */}
-      {batchFormData.apiaries.length > 0 && (
+      {selectedApiaries.length > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
           <h5 className="font-medium text-blue-900 mb-2">Batch Summary</h5>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
             <div>
               <p className="text-blue-700 font-medium">Total Apiaries</p>
-              <p className="text-blue-900 text-lg font-bold">{batchFormData.apiaries.length}</p>
+              <p className="text-blue-900 text-lg font-bold">{selectedApiaries.length}</p>
             </div>
             <div>
               <p className="text-blue-700 font-medium">Total Hives</p>
               <p className="text-blue-900 text-lg font-bold">
-                {batchFormData.apiaries.reduce((sum, apiary) => sum + (parseInt(apiary.hiveCount) || 0), 0)}
+                {selectedApiaries.reduce((sum, apiary) => sum + (apiary.hiveCount || 0), 0)}
               </p>
             </div>
             <div>
               <p className="text-blue-700 font-medium">Total Honey (kg)</p>
               <p className="text-blue-900 text-lg font-bold">
-                {batchFormData.apiaries.reduce((sum, apiary) => sum + (parseFloat(apiary.kilosCollected) || 0), 0).toFixed(1)}
-              </p>
-            </div>
-            <div>
-              <p className="text-blue-700 font-medium">Locations Set</p>
-              <p className="text-blue-900 text-lg font-bold">
-                {batchFormData.apiaries.filter(apiary => apiary.locationId).length}/{batchFormData.apiaries.length}
+                {selectedApiaries.reduce((sum, apiary) => sum + (apiary.kilosCollected || 0), 0).toFixed(1)}
               </p>
             </div>
           </div>
@@ -1200,7 +1787,7 @@ const handleLocationCancel = () => {
             setShowBatchModal(false);
             setBatchNumber('');
             setBatchName('');
-            setBatchFormData({ apiaries: [{ name: '', number: '', hiveCount: 0, kilosCollected: 0, locationId: '' }] });
+            setSelectedApiaries([]);
           }}
           className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
         >
@@ -1208,9 +1795,9 @@ const handleLocationCancel = () => {
         </button>
         <button
           onClick={createBatch}
-          disabled={!batchNumber || batchFormData.apiaries.length === 0 || batchFormData.apiaries.some(apiary => !apiary.name || !apiary.number || !apiary.locationId)}
+          disabled={!batchNumber || selectedApiaries.length === 0}
           className={`px-6 py-2 rounded-md text-white font-medium transition-colors ${
-            batchNumber && batchFormData.apiaries.length > 0 && batchFormData.apiaries.every(apiary => apiary.name && apiary.number && apiary.locationId)
+            batchNumber && selectedApiaries.length > 0
               ? 'bg-green-600 hover:bg-green-700' 
               : 'bg-gray-300 cursor-not-allowed'
           }`}
@@ -1223,15 +1810,309 @@ const handleLocationCancel = () => {
   </div>
 )}
 
+{/* Create Apiary Modal */}
+{showApiaryModal && (
+  <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-40">
+    <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto mx-4">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-xl font-bold">Apiary Information</h3>
+        <button
+          onClick={() => {
+            setShowApiaryModal(false);
+            setApiaryFormData({
+              name: '',
+              number: '',
+              hiveCount: 0,
+              honeyCollected: 0,
+              location: null
+            });
+          }}
+          className="text-gray-500 hover:text-gray-700"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {/* Apiary Name */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Apiary Name <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={apiaryFormData.name}
+            onChange={(e) => setApiaryFormData(prev => ({ ...prev, name: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="Enter apiary name"
+            required
+            autoFocus
+          />
+        </div>
+
+        {/* Apiary Number/ID */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Apiary Number/ID <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={apiaryFormData.number}
+            onChange={(e) => setApiaryFormData(prev => ({ ...prev, number: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="Enter apiary ID"
+            required
+          />
+        </div>
+
+        {/* Number of Hives */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Number of Hives <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="number"
+            min="0"
+            value={apiaryFormData.hiveCount}
+            onChange={(e) => setApiaryFormData(prev => ({ ...prev, hiveCount: parseInt(e.target.value) || 0 }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="0"
+            required
+          />
+        </div>
+
+        {/* Honey Collected */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Honey Collected (kg)
+          </label>
+          <input
+            type="number"
+            min="0"
+            step="0.1"
+            value={apiaryFormData.honeyCollected || 0}
+            onChange={(e) => setApiaryFormData(prev => ({ ...prev, honeyCollected: parseFloat(e.target.value) || 0 }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="0.0"
+          />
+        </div>
+
+        {/* Location Selection */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Apiary Location <span className="text-red-500">*</span>
+          </label>
+          
+          {/* Current selected location display */}
+          {apiaryFormData.location ? (
+            <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-md">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-medium text-green-800">
+                    Selected Location: {apiaryFormData.location.name || 'Custom Location'}
+                  </p>
+                  <p className="text-xs text-green-600">
+                    Coordinates: {apiaryFormData.location.latitude.toFixed(4)}, {apiaryFormData.location.longitude.toFixed(4)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
+                  className="text-red-500 hover:text-red-700 text-sm"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
+              <p className="text-sm text-amber-800 flex items-center">
+                <MapPin className="h-4 w-4 mr-1" />
+                Click on the map to set the apiary location
+              </p>
+            </div>
+          )}
+          
+          {/* Saved locations dropdown */}
+          {savedApiaryLocations.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Or select from saved locations:
+              </label>
+              <select
+                value=""
+                onChange={(e) => {
+                  const locationId = e.target.value;
+                  if (locationId) {
+                    const location = savedApiaryLocations.find(l => l.id?.toString() === locationId);
+                    if (location) {
+                      setApiaryFormData(prev => ({ ...prev, location }));
+                    }
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500 text-sm"
+              >
+                <option value="">Choose a saved location...</option>
+                {savedApiaryLocations.map(location => (
+                  <option key={location.id} value={location.id}>
+                    {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Mini map or location picker would go here */}
+          <div 
+  ref={mapRef}
+  className="w-full rounded-lg border border-gray-300 cursor-pointer"
+  style={{ 
+    height: '450px', 
+    minHeight: '450px',
+    width: '100%',
+    display: 'block' // Ensure it's visible
+  }}
+/>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex justify-end space-x-3 pt-6 border-t mt-6">
+        <button
+          onClick={() => {
+            setShowApiaryModal(false);
+            setApiaryFormData({
+              name: '',
+              number: '',
+              hiveCount: 0,
+              honeyCollected: 0,
+              location: null
+            });
+          }}
+          className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+        >
+          Cancel
+        </button>
+        
+        <button
+  onClick={async () => {
+    try {
+      // Set loading state
+      setIsLoadingApiaries(true);
+      
+      // Log current authentication state for debugging
+      console.log('=== BUTTON CLICK DEBUG ===');
+      console.log('localStorage tokens:', {
+        'auth-token': localStorage.getItem('auth-token'),
+        'token': localStorage.getItem('token')
+      });
+      console.log('sessionStorage tokens:', {
+        'auth-token': sessionStorage.getItem('auth-token'),
+        'token': sessionStorage.getItem('token')
+      });
+      console.log('Document cookies:', document.cookie);
+
+      const newApiary = {
+        name: apiaryFormData.name,
+        number: apiaryFormData.number,
+        hiveCount: apiaryFormData.hiveCount,
+        honeyCollected: apiaryFormData.honeyCollected,
+        location: apiaryFormData.location
+      };
+
+      console.log('Creating apiary:', newApiary);
+
+      // OPTION 1: Use your existing saveApiaryToDatabase function (recommended)
+      // This function likely handles authentication correctly
+      await saveApiaryToDatabase(newApiary);
+
+      // OPTION 2: If you must use direct fetch, use session-based auth
+      /*
+      const response = await fetch('/api/apiaries', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include', // This sends session cookies automatically
+        body: JSON.stringify(newApiary)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('API Error:', errorText);
+        throw new Error(`Failed to create apiary: ${response.status} ${response.statusText}`);
+      }
+
+      const createdApiary = await response.json();
+      console.log('Apiary created successfully:', createdApiary);
+      */
+
+      // Close modal and reset form immediately after successful save
+      setShowApiaryModal(false);
+      setApiaryFormData({
+        name: '',
+        number: '',
+        hiveCount: 0,
+        honeyCollected: 0,
+        location: null
+      });
+
+      // Refresh the apiaries list from database
+      await refreshApiariesFromDatabase();
+
+      // Optional: Show success message
+      console.log('Apiary saved successfully!');
+      
+    } catch (error) {
+      console.error('Error saving apiary:', error);
+      
+      // Show specific error messages
+      if (error.message.includes('already exists')) {
+        alert('An apiary with this number already exists. Please use a different number.');
+      } else if (error.message.includes('authentication') || error.message.includes('Authentication')) {
+        alert('Authentication failed. Please log in again.');
+        // Optionally redirect to login
+        // window.location.href = '/login';
+      } else {
+        alert(`Failed to save apiary: ${error.message}`);
+      }
+    } finally {
+      setIsLoadingApiaries(false);
+    }
+  }}
+  disabled={!apiaryFormData.name || !apiaryFormData.number || !apiaryFormData.location || isLoadingApiaries}
+  className={`px-6 py-2 rounded-md text-white font-medium transition-colors ${
+    (apiaryFormData.name && apiaryFormData.number && apiaryFormData.location && !isLoadingApiaries)
+      ? 'bg-blue-600 hover:bg-blue-700' 
+      : 'bg-gray-300 cursor-not-allowed'
+  }`}
+>
+  {isLoadingApiaries ? (
+    <>
+      <div className="h-4 w-4 inline mr-2 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+      Saving...
+    </>
+  ) : (
+    <>
+      <MapPin className="h-4 w-4 inline mr-2" />
+      Save Apiary
+    </>
+  )}
+</button>
+      </div>
+    </div>
+  </div>
+)}
+
       {notification.show && (
         <div className="fixed bottom-4 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-lg max-w-md z-50">
           {notification.message}
         </div>
       )}
-      {/* Token Wallet Section */}
+     {/* Token Wallet Section */}
 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-  {/* Token Wallet Section - Adjusted for equal height */}
-  <div className="bg-white p-4 rounded-lg shadow text-black h-fit">
+  {/* Token Wallet Section - Equal height with token distribution */}
+  <div className="bg-white p-4 rounded-lg shadow text-black">
     <h2 className="text-lg font-semibold mb-4">Token Wallet Overview</h2>
     <div className="space-y-6">
       <div className="border rounded-lg p-4 bg-gray-50">
@@ -1288,7 +2169,6 @@ const handleLocationCancel = () => {
       </div>
     </div>
   </div>
-
   {/* Google Maps Section - Same height */}
   <div className="bg-white p-4 rounded-lg shadow text-black h-fit">
     <h2 className="text-lg font-semibold mb-4">Apiary Locations</h2>
@@ -1345,7 +2225,7 @@ const handleLocationCancel = () => {
                 Cancel
               </button>
               <button
-  onClick={handleLocationConfirm}
+  onClick={() => handleLocationConfirm()}
   disabled={isSaving}
   className="flex-1 px-3 py-2 text-xs bg-blue-400 text-white rounded-full hover:bg-blue-500 transition-colors font-semibold flex items-center justify-center disabled:opacity-50"
 >

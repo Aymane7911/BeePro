@@ -3,53 +3,57 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export async function GET(req: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(request.url);
     const token = searchParams.get('token');
 
     if (!token) {
       return NextResponse.json(
-        { success: false, error: 'Missing confirmation token.' },
+        { error: 'Confirmation token is required' },
         { status: 400 }
       );
     }
 
+    // Find user by confirmation token
     const user = await prisma.beeusers.findFirst({
       where: { confirmationToken: token },
     });
 
     if (!user) {
       return NextResponse.json(
-        { success: false, error: 'Invalid or expired confirmation token.' },
-        { status: 404 }
+        { error: 'Invalid or expired confirmation token' },
+        { status: 400 }
       );
     }
 
     if (user.isConfirmed) {
       return NextResponse.json(
-        { success: false, message: 'Email already confirmed.' },
-        { status: 400 }
+        { message: 'Email already confirmed' },
+        { status: 200 }
       );
     }
 
+    // Confirm the user
     await prisma.beeusers.update({
-      where: { id: user.id }, // more stable than `email`
+      where: { id: user.id },
       data: {
         isConfirmed: true,
-        confirmationToken: null,
+        confirmationToken: null, // Clear the token
       },
     });
 
     return NextResponse.json(
-      { success: true, message: 'Email confirmed successfully.' },
+      { message: 'Email confirmed successfully' },
       { status: 200 }
     );
   } catch (error) {
-    console.error('[CONFIRM_EMAIL_ERROR]', error);
+    console.error('Error confirming email:', error);
     return NextResponse.json(
-      { success: false, error: 'Something went wrong during confirmation.' },
+      { error: 'Failed to confirm email' },
       { status: 500 }
     );
+  } finally {
+    await prisma.$disconnect();
   }
 }

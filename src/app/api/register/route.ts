@@ -1,23 +1,22 @@
-// app/api/register/route.ts
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import nodemailer from 'nodemailer';  // Import nodemailer
-import { randomUUID } from 'crypto'; // To generate confirmation token
+import nodemailer from 'nodemailer';
+import { randomUUID } from 'crypto';
+import bcrypt from 'bcryptjs'; // Add password hashing
 
 const prisma = new PrismaClient();
 
-// Create a transporter object using SMTP (example with Gmail)
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER,  // Your email address
-    pass: process.env.EMAIL_PASSWORD,  // Your email password or app-specific password
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD,
   },
 });
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const body = await req.json();
+    const body = await request.json();
     const { firstname, lastname, email, phonenumber, password } = body;
 
     if (!firstname || !lastname || !password || (!email && !phonenumber)) {
@@ -27,6 +26,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // Check if user already exists
     const existingUser = await prisma.beeusers.findFirst({
       where: {
         OR: [
@@ -43,43 +43,52 @@ export async function POST(req: Request) {
       );
     }
 
-    const confirmationToken = randomUUID(); // Generate unique token
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const confirmationToken = randomUUID();
 
+    // Create new user
     const newUser = await prisma.beeusers.create({
       data: {
         firstname,
         lastname,
         email,
         phonenumber,
-        password, // You should hash this in real applications
+        password: hashedPassword,
         confirmationToken,
         isConfirmed: false,
       },
     });
 
-    console.log('User registered:', newUser);
+    console.log('User registered:', newUser.id);
 
-    // Send confirmation email with token
-    const confirmationLink = `${process.env.BASE_URL}/confirm?token=${confirmationToken}`;
-    const mailOptions = {
-      from: process.env.EMAIL_USER, // Sender address
-      to: email, // List of recipients
-      subject: 'Confirm your email',
-      text: `Please click the following link to confirm your email: ${confirmationLink}`,
-    };
+    // Send confirmation email
+    if (email) {
+      const confirmationLink = `${process.env.BASE_URL}/confirm?token=${confirmationToken}`;
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'Confirm your email',
+        text: `Please click the following link to confirm your email: ${confirmationLink}`,
+      };
 
-    await transporter.sendMail(mailOptions);  // Send email
+      await transporter.sendMail(mailOptions);
+    }
 
     return NextResponse.json(
-      { success: true, message: 'User registered successfully. Please check your email to confirm.' },
+      { 
+        success: true, 
+        message: 'User registered successfully. Please check your email to confirm.' 
+      },
       { status: 201 }
     );
-
   } catch (error) {
-    console.error('[REGISTER_ERROR]', error);
+    console.error('Error during registration:', error);
     return NextResponse.json(
       { success: false, error: 'Internal Server Error during registration.' },
       { status: 500 }
     );
+  } finally {
+    await prisma.$disconnect();
   }
 }
