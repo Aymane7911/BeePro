@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2 } from 'lucide-react';
+import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2, Globe, FileText, AlertCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 // Define your interfaces here, right after imports
@@ -151,8 +151,10 @@ export default function JarManagementDashboard() {
   // Add these state variables to your existing component
   const [showLocationConfirm, setShowLocationConfirm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<LocationCoordinates | null>(null);
-  const mapRef = useRef(null);
+  const mapRef = useRef<HTMLDivElement | null>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
+  const miniMapRef = useRef<HTMLDivElement | null>(null); 
+  const miniGoogleMapRef = useRef<google.maps.Map | null>(null);
   const googleMapsApiKey = "AIzaSyBhRpOpnKWIXGMOTsdVoGKAnAC94Q0Sgxc"; 
   const [savedApiaryLocations, setSavedApiaryLocations] = useState<ApiaryLocation[]>([]);
   const [showApiaryModal, setShowApiaryModal] = useState(false);
@@ -1132,6 +1134,7 @@ allBatches.forEach(batch => {
   const [selectedItem, setSelectedItem] = useState<BatchData | null>(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const router = useRouter();
+
   useEffect(() => {
   const urlParams = new URLSearchParams(window.location.search);
   const tokensAdded = parseInt(urlParams.get('tokensAdded'));
@@ -1217,9 +1220,12 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
-  const initMap = () => {
-    if (window.google && mapRef.current) {
-      const map = new window.google.maps.Map(mapRef.current, {
+  const initMaps = () => {
+    if (window.google) {
+      console.log('Initializing maps...');
+      
+      // Common map configuration
+      const mapConfig = {
         center: { lat: 52.0907, lng: 5.1214 },
         zoom: 8,
         styles: [
@@ -1227,55 +1233,175 @@ useEffect(() => {
             featureType: 'poi',
             elementType: 'labels',
             stylers: [{ visibility: 'off' }]
+          },
+          {
+            featureType: 'transit',
+            elementType: 'labels',
+            stylers: [{ visibility: 'off' }]
           }
-        ]
-      });
+        ],
+        mapTypeControl: true,
+        mapTypeControlOptions: {
+          style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+          position: window.google.maps.ControlPosition.TOP_CENTER,
+        },
+        zoomControl: true,
+        zoomControlOptions: {
+          position: window.google.maps.ControlPosition.RIGHT_CENTER,
+        },
+        scaleControl: true,
+        streetViewControl: true,
+        streetViewControlOptions: {
+          position: window.google.maps.ControlPosition.RIGHT_TOP,
+        },
+        fullscreenControl: true
+      };
 
-      googleMapRef.current = map;
+      // Initialize main map
+      if (mapRef.current) {
+        console.log('Initializing main map...');
+        const map = new window.google.maps.Map(mapRef.current, mapConfig);
+        googleMapRef.current = map;
+        console.log('Main map initialized');
 
-      // Add click listener to map with precise position tracking
-      map.addListener('click', (event: google.maps.MapMouseEvent) => {
-        const lat = event.latLng?.lat();
-        const lng = event.latLng?.lng();
+        // Add click listener to main map
+        map.addListener('click', (event) => {
+          handleMapClick(event, mapRef.current, 'main');
+        });
+      } else {
+        console.log('Main map ref not found');
+      }
+
+      // Initialize mini map with better timing and error handling
+      const initMiniMap = (attempt = 1) => {
+        console.log(`Mini map initialization attempt ${attempt}`);
         
-        // Get the exact pixel position of the click relative to the map container
-        const mapRect = mapRef.current.getBoundingClientRect();
-        const overlay = new window.google.maps.OverlayView();
-        
-        overlay.onAdd = function() {
-          // Get the pixel position of the clicked lat/lng
-          const projection = this.getProjection();
-          const pixelPosition = projection.fromLatLngToContainerPixel(event.latLng);
+        if (miniMapRef.current) {
+          console.log('Mini map ref found, initializing...');
           
-          // Calculate absolute position on the page
-          const clickX = mapRect.left + pixelPosition.x + window.scrollX;
-          const clickY = mapRect.top + pixelPosition.y + window.scrollY;
+          try {
+            const miniMapConfig = {
+              ...mapConfig,
+              zoom: 6, // Slightly different zoom for mini map
+              zoomControl: false, // Custom zoom controls in overlay
+              mapTypeControl: false,
+              streetViewControl: false,
+              fullscreenControl: false
+            };
+
+            const miniMap = new window.google.maps.Map(miniMapRef.current, miniMapConfig);
+            miniGoogleMapRef.current = miniMap;
+            console.log('Mini map instance created successfully');
+            
+            // Force resize after a short delay to ensure proper rendering
+            setTimeout(() => {
+              console.log('Triggering mini map resize...');
+              window.google.maps.event.trigger(miniMap, 'resize');
+              miniMap.setCenter(mapConfig.center);
+            }, 100);
+
+            // Add click listener to mini map
+            miniMap.addListener('click', (event) => {
+              handleMapClick(event, miniMapRef.current, 'mini');
+            });
+            
+            console.log('Mini map initialization complete');
+            
+          } catch (error) {
+            console.error('Error creating mini map:', error);
+            
+            // Retry if attempt failed
+            if (attempt < 3) {
+              setTimeout(() => initMiniMap(attempt + 1), 1000);
+            }
+          }
+        } else {
+          console.log(`Mini map ref not found on attempt ${attempt}`);
           
-          console.log('Map clicked at:', { lat, lng, x: clickX, y: clickY });
-          setSelectedLocation({ lat, lng });
-          setClickPosition({ x: clickX, y: clickY });
-          setShowLocationConfirm(true);
-          
-          // Remove the overlay after getting the position
-          overlay.setMap(null);
-        };
-        
-        overlay.draw = function() {};
-        overlay.setMap(map);
-      });
+          // Retry up to 5 times with increasing delays
+          if (attempt < 5) {
+            setTimeout(() => initMiniMap(attempt + 1), attempt * 500);
+          } else {
+            console.error('Failed to initialize mini map after 5 attempts');
+          }
+        }
+      };
+      
+      // Start mini map initialization with delay to ensure modal is rendered
+      setTimeout(() => initMiniMap(), 200);
     }
   };
 
+  // Helper function to handle map clicks for both maps
+  const handleMapClick = (event, mapContainer, mapType) => {
+    const lat = event.latLng?.lat();
+    const lng = event.latLng?.lng();
+    
+    if (!mapContainer || !lat || !lng || !event.latLng) return;
+    
+    console.log(`${mapType} map clicked at:`, { lat, lng });
+    
+    // Get the exact pixel position of the click relative to the map container
+    const mapRect = mapContainer.getBoundingClientRect();
+    const overlay = new window.google.maps.OverlayView();
+    
+    overlay.onAdd = function() {
+      // Get the pixel position of the clicked lat/lng
+      const projection = this.getProjection();
+      if (!projection) return;
+      
+      const pixelPosition = projection.fromLatLngToContainerPixel(event.latLng);
+      if (!pixelPosition) return;
+      
+      // Calculate absolute position on the page
+      const clickX = mapRect.left + pixelPosition.x + window.scrollX;
+      const clickY = mapRect.top + pixelPosition.y + window.scrollY;
+      
+      console.log(`${mapType} map clicked at position:`, { lat, lng, x: clickX, y: clickY });
+      
+      // Update state for location confirmation
+      setSelectedLocation({ lat, lng });
+      setClickPosition({ x: clickX, y: clickY });
+      setShowLocationConfirm(true);
+      
+      // Remove the overlay after getting the position
+      overlay.setMap(null);
+    };
+    
+    overlay.draw = function() {};
+    
+    // Set overlay to the appropriate map
+    const targetMap = mapType === 'main' ? googleMapRef.current : miniGoogleMapRef.current;
+    overlay.setMap(targetMap);
+  };
+
+  // Load Google Maps API if not already loaded
   if (!window.google) {
     const script = document.createElement('script');
     script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places`;
     script.async = true;
-    script.onload = initMap;
+    script.onload = initMaps;
+    script.onerror = () => {
+      console.error('Failed to load Google Maps API');
+    };
     document.head.appendChild(script);
   } else {
-    initMap();
+    initMaps();
   }
-}, []);
+
+  // Cleanup function
+  return () => {
+    // Clean up any event listeners if needed
+    if (googleMapRef.current) {
+      window.google?.maps?.event?.clearInstanceListeners(googleMapRef.current);
+    }
+    if (miniGoogleMapRef.current) {
+      window.google?.maps?.event?.clearInstanceListeners(miniGoogleMapRef.current);
+    }
+  };
+}, [showApiaryModal]);
+
+
 
 
 
@@ -1812,293 +1938,360 @@ const handleLocationCancel = () => {
 
 {/* Create Apiary Modal */}
 {showApiaryModal && (
-  <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-40">
-    <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto mx-4">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold">Apiary Information</h3>
-        <button
-          onClick={() => {
-            setShowApiaryModal(false);
-            setApiaryFormData({
-              name: '',
-              number: '',
-              hiveCount: 0,
-              honeyCollected: 0,
-              location: null
-            });
-          }}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          <X className="h-5 w-5" />
-        </button>
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+      {/* Modal Header */}
+      <div className="bg-gradient-to-r from-yellow-400 to-amber-500 px-6 py-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+            <div className="bg-white/20 p-2 rounded-lg">
+              <MapPin className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-white">Create New Apiary</h3>
+              <p className="text-yellow-100 text-sm">Add a new apiary location to your collection</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setShowApiaryModal(false);
+              setApiaryFormData({
+                name: '',
+                number: '',
+                hiveCount: 0,
+                honeyCollected: 0,
+                location: null
+              });
+            }}
+            className="text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-4">
-        {/* Apiary Name */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Apiary Name <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={apiaryFormData.name}
-            onChange={(e) => setApiaryFormData(prev => ({ ...prev, name: e.target.value }))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            placeholder="Enter apiary name"
-            required
-            autoFocus
-          />
-        </div>
-
-        {/* Apiary Number/ID */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Apiary Number/ID <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={apiaryFormData.number}
-            onChange={(e) => setApiaryFormData(prev => ({ ...prev, number: e.target.value }))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            placeholder="Enter apiary ID"
-            required
-          />
-        </div>
-
-        {/* Number of Hives */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Number of Hives <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="number"
-            min="0"
-            value={apiaryFormData.hiveCount}
-            onChange={(e) => setApiaryFormData(prev => ({ ...prev, hiveCount: parseInt(e.target.value) || 0 }))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            placeholder="0"
-            required
-          />
-        </div>
-
-        {/* Honey Collected */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Honey Collected (kg)
-          </label>
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={apiaryFormData.honeyCollected || 0}
-            onChange={(e) => setApiaryFormData(prev => ({ ...prev, honeyCollected: parseFloat(e.target.value) || 0 }))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            placeholder="0.0"
-          />
-        </div>
-
-        {/* Location Selection */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Apiary Location <span className="text-red-500">*</span>
-          </label>
-          
-          {/* Current selected location display */}
-          {apiaryFormData.location ? (
-            <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-md">
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="text-sm font-medium text-green-800">
-                    Selected Location: {apiaryFormData.location.name || 'Custom Location'}
-                  </p>
-                  <p className="text-xs text-green-600">
-                    Coordinates: {apiaryFormData.location.latitude.toFixed(4)}, {apiaryFormData.location.longitude.toFixed(4)}
-                  </p>
+      {/* Modal Content */}
+      <div className="flex flex-col lg:flex-row overflow-hidden" style={{ height: 'calc(90vh - 120px)' }}>
+        {/* Left Panel - Form */}
+        <div className="lg:w-1/2 p-6 overflow-y-auto bg-gray-50">
+          <div className="space-y-6">
+            {/* Apiary Details Section */}
+            <div className="bg-white p-4 rounded-lg shadow-sm border">
+              <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
+                <div className="bg-blue-100 p-1 rounded mr-2">
+                  <FileText className="h-4 w-4 text-blue-600" />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
-                  className="text-red-500 hover:text-red-700 text-sm"
+                Apiary Details
+              </h4>
+              
+              <div className="grid grid-cols-1 gap-4">
+                {/* Apiary Name */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Apiary Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={apiaryFormData.name}
+                    onChange={(e) => setApiaryFormData(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
+                    placeholder="e.g., Sunrise Meadow Apiary"
+                    required
+                    autoFocus
+                  />
+                </div>
+
+                {/* Apiary Number/ID */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Apiary Number/ID <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={apiaryFormData.number}
+                    onChange={(e) => setApiaryFormData(prev => ({ ...prev, number: e.target.value }))}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
+                    placeholder="e.g., APY-001"
+                    required
+                  />
+                </div>
+
+                {/* Hive Count and Honey Collected - Side by side */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Number of Hives <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={apiaryFormData.hiveCount}
+                      onChange={(e) => setApiaryFormData(prev => ({ ...prev, hiveCount: parseInt(e.target.value) || 0 }))}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
+                      placeholder="0"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Honey Collected (kg)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={apiaryFormData.honeyCollected || 0}
+                      onChange={(e) => setApiaryFormData(prev => ({ ...prev, honeyCollected: parseFloat(e.target.value) || 0 }))}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
+                      placeholder="0.0"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Location Section */}
+            <div className="bg-white p-4 rounded-lg shadow-sm border">
+              <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
+                <div className="bg-green-100 p-1 rounded mr-2">
+                  <MapPin className="h-4 w-4 text-green-600" />
+                </div>
+                Location Settings
+              </h4>
+
+              {/* Current Location Display */}
+              {apiaryFormData.location ? (
+                <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center mb-2">
+                        <div className="bg-green-100 p-1 rounded mr-2">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                        </div>
+                        <p className="font-medium text-green-800">
+                          {apiaryFormData.location.name || 'Selected Location'}
+                        </p>
+                      </div>
+                      <p className="text-sm text-green-600 ml-7">
+                        📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+                      title="Remove location"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
+                  <div className="flex items-center">
+                    <div className="bg-amber-100 p-1 rounded mr-2">
+                      <AlertCircle className="h-4 w-4 text-amber-600" />
+                    </div>
+                    <p className="text-sm text-amber-800">
+                      Click on the map to set the apiary location
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Saved Locations Dropdown */}
+              {savedApiaryLocations.length > 0 && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Quick Select from Saved Locations
+                  </label>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const locationId = e.target.value;
+                      if (locationId) {
+                        const location = savedApiaryLocations.find(l => l.id?.toString() === locationId);
+                        if (location) {
+                          setApiaryFormData(prev => ({ ...prev, location }));
+                        }
+                      }
+                    }}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
+                  >
+                    <option value="">Choose a saved location...</option>
+                    {savedApiaryLocations.map(location => (
+                      <option key={location.id} value={location.id}>
+                        {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Panel - Mini Map */}
+        <div className="lg:w-1/2 bg-white border-l border-gray-200 flex flex-col">
+          <div className="p-4 bg-gray-50 border-b border-gray-200">
+            <h4 className="font-semibold text-gray-800 flex items-center">
+              <div className="bg-blue-100 p-1 rounded mr-2">
+                <Globe className="h-4 w-4 text-blue-600" />
+              </div>
+              Interactive Location Map
+            </h4>
+            <p className="text-sm text-gray-600 mt-1">
+              Click anywhere on the map to set your apiary location
+            </p>
+          </div>
+          
+          <div className="flex-1 p-4">
+            <div className="h-full relative">
+              <div 
+                ref={miniMapRef}
+                data-testid="mini-map"
+                className="w-full h-full rounded-lg border-2 border-gray-300 cursor-crosshair shadow-inner bg-gray-100 relative overflow-hidden"
+                style={{ 
+                  minHeight: '400px',
+                  height: '100%'
+                }}
+              >
+                {/* Loading indicator */}
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                    <p className="text-sm text-gray-500">Loading map...</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Map controls overlay */}
+              <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-2 space-y-2">
+                <button 
+                  className="w-8 h-8 bg-white border border-gray-300 rounded flex items-center justify-center hover:bg-gray-50 text-xs font-bold"
+                  onClick={() => {
+                    if (miniGoogleMapRef.current) {
+                      const currentZoom = miniGoogleMapRef.current.getZoom();
+                      miniGoogleMapRef.current.setZoom(currentZoom + 1);
+                    }
+                  }}
                 >
-                  <X className="h-4 w-4" />
+                  +
+                </button>
+                <button 
+                  className="w-8 h-8 bg-white border border-gray-300 rounded flex items-center justify-center hover:bg-gray-50 text-xs font-bold"
+                  onClick={() => {
+                    if (miniGoogleMapRef.current) {
+                      const currentZoom = miniGoogleMapRef.current.getZoom();
+                      miniGoogleMapRef.current.setZoom(currentZoom - 1);
+                    }
+                  }}
+                >
+                  −
                 </button>
               </div>
             </div>
-          ) : (
-            <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
-              <p className="text-sm text-amber-800 flex items-center">
-                <MapPin className="h-4 w-4 mr-1" />
-                Click on the map to set the apiary location
-              </p>
-            </div>
-          )}
-          
-          {/* Saved locations dropdown */}
-          {savedApiaryLocations.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                Or select from saved locations:
-              </label>
-              <select
-                value=""
-                onChange={(e) => {
-                  const locationId = e.target.value;
-                  if (locationId) {
-                    const location = savedApiaryLocations.find(l => l.id?.toString() === locationId);
-                    if (location) {
-                      setApiaryFormData(prev => ({ ...prev, location }));
-                    }
-                  }
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500 text-sm"
-              >
-                <option value="">Choose a saved location...</option>
-                {savedApiaryLocations.map(location => (
-                  <option key={location.id} value={location.id}>
-                    {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Mini map or location picker would go here */}
-          <div 
-  ref={mapRef}
-  className="w-full rounded-lg border border-gray-300 cursor-pointer"
-  style={{ 
-    height: '450px', 
-    minHeight: '450px',
-    width: '100%',
-    display: 'block' // Ensure it's visible
-  }}
-/>
+          </div>
         </div>
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex justify-end space-x-3 pt-6 border-t mt-6">
-        <button
-          onClick={() => {
-            setShowApiaryModal(false);
-            setApiaryFormData({
-              name: '',
-              number: '',
-              hiveCount: 0,
-              honeyCollected: 0,
-              location: null
-            });
-          }}
-          className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-        >
-          Cancel
-        </button>
-        
-        <button
-  onClick={async () => {
-    try {
-      // Set loading state
-      setIsLoadingApiaries(true);
-      
-      // Log current authentication state for debugging
-      console.log('=== BUTTON CLICK DEBUG ===');
-      console.log('localStorage tokens:', {
-        'auth-token': localStorage.getItem('auth-token'),
-        'token': localStorage.getItem('token')
-      });
-      console.log('sessionStorage tokens:', {
-        'auth-token': sessionStorage.getItem('auth-token'),
-        'token': sessionStorage.getItem('token')
-      });
-      console.log('Document cookies:', document.cookie);
+      {/* Modal Footer */}
+      <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+        <div className="flex justify-between items-center">
+          <div className="text-sm text-gray-500">
+            {apiaryFormData.location ? (
+              <span className="text-green-600 font-medium">✓ Location selected</span>
+            ) : (
+              <span>Location required</span>
+            )}
+          </div>
+          
+          <div className="flex space-x-3">
+            <button
+              onClick={() => {
+                setShowApiaryModal(false);
+                setApiaryFormData({
+                  name: '',
+                  number: '',
+                  hiveCount: 0,
+                  honeyCollected: 0,
+                  location: null
+                });
+              }}
+              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors font-medium"
+            >
+              Cancel
+            </button>
+            
+            <button
+              onClick={async () => {
+                try {
+                  setIsLoadingApiaries(true);
+                  
+                  console.log('=== CREATING APIARY ===');
+                  console.log('Form data:', apiaryFormData);
 
-      const newApiary = {
-        name: apiaryFormData.name,
-        number: apiaryFormData.number,
-        hiveCount: apiaryFormData.hiveCount,
-        honeyCollected: apiaryFormData.honeyCollected,
-        location: apiaryFormData.location
-      };
+                  const newApiary = {
+                    name: apiaryFormData.name,
+                    number: apiaryFormData.number,
+                    hiveCount: apiaryFormData.hiveCount,
+                    honeyCollected: apiaryFormData.honeyCollected,
+                    location: apiaryFormData.location
+                  };
 
-      console.log('Creating apiary:', newApiary);
+                  await saveApiaryToDatabase(newApiary);
 
-      // OPTION 1: Use your existing saveApiaryToDatabase function (recommended)
-      // This function likely handles authentication correctly
-      await saveApiaryToDatabase(newApiary);
+                  // Close modal and reset form
+                  setShowApiaryModal(false);
+                  setApiaryFormData({
+                    name: '',
+                    number: '',
+                    hiveCount: 0,
+                    honeyCollected: 0,
+                    location: null
+                  });
 
-      // OPTION 2: If you must use direct fetch, use session-based auth
-      /*
-      const response = await fetch('/api/apiaries', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include', // This sends session cookies automatically
-        body: JSON.stringify(newApiary)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API Error:', errorText);
-        throw new Error(`Failed to create apiary: ${response.status} ${response.statusText}`);
-      }
-
-      const createdApiary = await response.json();
-      console.log('Apiary created successfully:', createdApiary);
-      */
-
-      // Close modal and reset form immediately after successful save
-      setShowApiaryModal(false);
-      setApiaryFormData({
-        name: '',
-        number: '',
-        hiveCount: 0,
-        honeyCollected: 0,
-        location: null
-      });
-
-      // Refresh the apiaries list from database
-      await refreshApiariesFromDatabase();
-
-      // Optional: Show success message
-      console.log('Apiary saved successfully!');
-      
-    } catch (error) {
-      console.error('Error saving apiary:', error);
-      
-      // Show specific error messages
-      if (error.message.includes('already exists')) {
-        alert('An apiary with this number already exists. Please use a different number.');
-      } else if (error.message.includes('authentication') || error.message.includes('Authentication')) {
-        alert('Authentication failed. Please log in again.');
-        // Optionally redirect to login
-        // window.location.href = '/login';
-      } else {
-        alert(`Failed to save apiary: ${error.message}`);
-      }
-    } finally {
-      setIsLoadingApiaries(false);
-    }
-  }}
-  disabled={!apiaryFormData.name || !apiaryFormData.number || !apiaryFormData.location || isLoadingApiaries}
-  className={`px-6 py-2 rounded-md text-white font-medium transition-colors ${
-    (apiaryFormData.name && apiaryFormData.number && apiaryFormData.location && !isLoadingApiaries)
-      ? 'bg-blue-600 hover:bg-blue-700' 
-      : 'bg-gray-300 cursor-not-allowed'
-  }`}
->
-  {isLoadingApiaries ? (
-    <>
-      <div className="h-4 w-4 inline mr-2 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-      Saving...
-    </>
-  ) : (
-    <>
-      <MapPin className="h-4 w-4 inline mr-2" />
-      Save Apiary
-    </>
-  )}
-</button>
+                  // Refresh apiaries list
+                  await refreshApiariesFromDatabase();
+                  
+                  console.log('Apiary created successfully!');
+                  
+                } catch (error) {
+                  console.error('Error saving apiary:', error);
+                  
+                  if (error.message.includes('already exists')) {
+                    alert('An apiary with this number already exists. Please use a different number.');
+                  } else if (error.message.includes('authentication') || error.message.includes('Authentication')) {
+                    alert('Authentication failed. Please log in again.');
+                  } else {
+                    alert(`Failed to save apiary: ${error.message}`);
+                  }
+                } finally {
+                  setIsLoadingApiaries(false);
+                }
+              }}
+              disabled={!apiaryFormData.name || !apiaryFormData.number || !apiaryFormData.location || isLoadingApiaries}
+              className={`px-8 py-2 rounded-lg text-white font-medium transition-all duration-200 flex items-center space-x-2 ${
+                (apiaryFormData.name && apiaryFormData.number && apiaryFormData.location && !isLoadingApiaries)
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl transform hover:scale-105' 
+                  : 'bg-gray-300 cursor-not-allowed'
+              }`}
+            >
+              {isLoadingApiaries ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                  <span>Creating...</span>
+                </>
+              ) : (
+                <>
+                  <MapPin className="h-4 w-4" />
+                  <span>Create Apiary</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
