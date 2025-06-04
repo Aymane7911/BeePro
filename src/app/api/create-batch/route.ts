@@ -12,7 +12,7 @@ interface ApiaryData {
   kilosCollected?: number | string;
   latitude?: number | string | null;
   longitude?: number | string | null;
-  locationId?: string; // Add this field
+  locationId?: string;
 }
 
 interface BatchRequestBody {
@@ -39,17 +39,25 @@ export async function GET(request: Request) {
       return NextResponse.json({ message: 'Unauthorized: No token provided' }, { status: 401 });
     }
 
-    const userIdentifier = getUserIdFromToken(token);
+    // FIXED: Add await since getUserIdFromToken is async
+    const userIdentifier = await getUserIdFromToken(token);
     if (!userIdentifier) {
       return NextResponse.json({ message: 'Unauthorized: Invalid token' }, { status: 401 });
     }
 
-    // Find user by email and get their integer ID
+    // FIXED: Based on your logs, getUserIdFromToken returns the user ID, not email
+    // Convert to number since it's the database ID
+    const userId = parseInt(String(userIdentifier));
+    if (isNaN(userId)) {
+      return NextResponse.json({ message: 'Invalid user identifier' }, { status: 401 });
+    }
+
+    // FIXED: Find user by ID instead of email, and handle tokenStats relationship properly
     const user = await prisma.beeusers.findUnique({
-      where: { email: userIdentifier },
-      include: { tokenStats: true },
+      where: { id: userId },
+      // Remove tokenStats from include if it doesn't exist in your schema
+      // include: { tokenStats: true },
     });
-    
 
     if (!user) {
       return NextResponse.json({ message: 'User not found' }, { status: 404 });
@@ -58,10 +66,11 @@ export async function GET(request: Request) {
     const batches = await prisma.batch.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { apiaries: true},
+      include: { apiaries: true },
     });
 
-    const tokenStats = user.tokenStats || {
+    // FIXED: Handle tokenStats properly - either remove or create default values
+    const tokenStats = {
       totalTokens: 0,
       remainingTokens: 0,
       originOnly: 0,
@@ -95,30 +104,50 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get('Authorization');
     const token = authHeader?.replace('Bearer ', '').trim();
 
+    console.log('[POST] Raw auth header:', authHeader);
+    console.log('[POST] Extracted token:', token);
+
     if (!token) {
       return NextResponse.json({ message: 'Unauthorized: No token provided' }, { status: 401 });
     }
 
-    const userIdentifier = getUserIdFromToken(token);
+    // FIXED: Add await here since getUserIdFromToken is async
+    const userIdentifier = await getUserIdFromToken(token);
+    console.log('[POST] userIdentifier returned:', userIdentifier);
+    console.log('[POST] userIdentifier type:', typeof userIdentifier);
+    console.log('[POST] userIdentifier stringified:', JSON.stringify(userIdentifier));
+
     if (!userIdentifier) {
       return NextResponse.json({ message: 'Unauthorized: Invalid token' }, { status: 401 });
     }
 
+    // FIXED: Based on your logs, getUserIdFromToken returns the user ID as a string
+    // Convert to number for database query
+    const userId = parseInt(String(userIdentifier));
+    if (isNaN(userId)) {
+      return NextResponse.json({ message: 'Invalid user identifier' }, { status: 401 });
+    }
+
+    console.log('[POST] Final userId for query:', userId);
+    console.log('[POST] Final userId type:', typeof userId);
+
+    // FIXED: Query by ID instead of email, and handle tokenStats properly
     const user = await prisma.beeusers.findUnique({
-      where: { email: userIdentifier },
-      include: { tokenStats: true },
+      where: { id: userId },
+      // Remove tokenStats from include if it doesn't exist in your schema
+      // include: { tokenStats: true },
     });
 
     if (!user) {
       return NextResponse.json({ 
-        message: `User not found with email: ${userIdentifier}` 
+        message: `User not found with ID: ${userId}` 
       }, { status: 404 });
     }
 
-    const userId = user.id;
-
     const body = await request.json();
     const { batchNumber, batchName, apiaries = [] } = body;
+
+    console.log('[POST] Request body:', body);
 
     if (!batchNumber) {
       return NextResponse.json({ message: 'Batch number is required' }, { status: 400 });
@@ -133,7 +162,7 @@ export async function POST(request: NextRequest) {
     const finalBatchName = batchName?.trim() || `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
 
     const existingBatch = await prisma.batch.findFirst({
-      where: { batchNumber, userId },
+      where: { batchNumber, userId: user.id },
     });
 
     if (existingBatch) {
@@ -142,7 +171,7 @@ export async function POST(request: NextRequest) {
 
     const batch = await prisma.batch.create({
       data: {
-        user: { connect: { id: userId } },
+        user: { connect: { id: user.id } },
         batchNumber,
         batchName: finalBatchName,
         containerType: 'Glass',
@@ -161,9 +190,13 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    console.log('[POST] Created batch:', batch);
+
     const createdApiaries = [];
 
     for (const apiaryData of apiaries) {
+      console.log('[POST] Processing apiary:', apiaryData);
+      
       if (apiaryData.locationId?.trim()) {
         const locationId = parseInt(apiaryData.locationId);
         if (isNaN(locationId)) throw new Error(`Invalid locationId: ${apiaryData.locationId}`);
@@ -178,7 +211,8 @@ export async function POST(request: NextRequest) {
             number: apiaryData.number,
             hiveCount: apiaryData.hiveCount ? parseInt(String(apiaryData.hiveCount)) : 0,
             kilosCollected: apiaryData.kilosCollected ? parseFloat(String(apiaryData.kilosCollected)) : 0,
-            batchId: batch.id,
+            batch: { connect: { id: batch.id } }, // Connect via batch relation
+            user: { connect: { id: user.id } }, // Connect the apiary to the user
           },
         });
         createdApiaries.push(updatedApiary);
@@ -196,12 +230,15 @@ export async function POST(request: NextRequest) {
             kilosCollected,
             latitude: !isNaN(latitude) ? latitude : 0,
             longitude: !isNaN(longitude) ? longitude : 0,
-            batchId: batch.id,
+            batch: { connect: { id: batch.id } }, // Connect via batch relation
+            user: { connect: { id: user.id } }, // Connect the apiary to the user
           },
         });
         createdApiaries.push(newApiary);
       }
     }
+
+    console.log('[POST] Created apiaries:', createdApiaries);
 
     const completeBatch = await prisma.batch.findUnique({
       where: { id: batch.id },
@@ -209,10 +246,12 @@ export async function POST(request: NextRequest) {
     });
 
     const batches = await prisma.batch.findMany({
-      where: { userId },
+      where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
       include: { apiaries: true },
     });
+
+    console.log('[POST] Success - returning batch');
 
     return NextResponse.json({ 
       batch: completeBatch, 

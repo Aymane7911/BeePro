@@ -25,13 +25,22 @@ interface ApiaryLocation extends LocationCoordinates {
   longitude: number;
   createdAt?: string;
 }
+interface ApiaryFormData {
+  name: string;
+  number: string;
+  hiveCount: number;
+  honeyCollected: number;
+  location: ApiaryLocation | null;
+}
 
 interface Apiary {
   id: string;
   name: string;
   number: string;
   hiveCount: number;
+  honeyCollected: number,
   location: ApiaryLocation;
+  createdAt?: string;
 }
 
 interface LocationCoordinates {
@@ -162,13 +171,14 @@ export default function JarManagementDashboard() {
   const [isLoadingApiaries, setIsLoadingApiaries] = useState(false);
   const [selectedApiaries, setSelectedApiaries] = useState<SelectedApiary[]>([]); // Selected apiaries for current batch
   const [locations, setLocations] = useState<ApiaryLocation[]>([]);
-  const [apiaryFormData, setApiaryFormData] = useState<{
-  name: string;
-  number: string;
-  hiveCount: number;
-  honeyCollected: number;
-  location: ApiaryLocation | null;
-}>({
+  // Add these state variables to your component
+  const apiaryMarkers = useRef<google.maps.Marker[]>([]);
+  const [selectedApiary, setSelectedApiary] = useState<Apiary | null>(null);
+  const [selectedDropdownApiary, setSelectedDropdownApiary] = useState('');
+  const [showApiaryInfo, setShowApiaryInfo] = useState(false);
+  const [apiaryInfoPosition, setApiaryInfoPosition] = useState({ x: 0, y: 0 });
+  const tempMarker = useRef<google.maps.Marker | null>(null);
+  const [apiaryFormData, setApiaryFormData] = useState<ApiaryFormData>({
   name: '',
   number: '',
   hiveCount: 0,
@@ -182,6 +192,7 @@ export default function JarManagementDashboard() {
   const headers: { [key: string]: string } = {
   'Content-Type': 'application/json',
 };
+
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -332,37 +343,66 @@ const refreshApiariesFromDatabase = async () => {
   try {
     console.log('=== REFRESH APIARIES DEBUG ===');
     
-    // Get the JWT token the same way as your save function
+    // Enhanced token retrieval with better debugging
     let token = null;
     
     if (typeof window !== 'undefined') {
-      token = localStorage.getItem('auth-token') || 
-               sessionStorage.getItem('auth-token');
+      // Check localStorage first
+      token = localStorage.getItem('auth-token');
+      console.log('localStorage token:', token ? 'exists' : 'missing');
+      
+      // Check sessionStorage as fallback
+      if (!token) {
+        token = sessionStorage.getItem('auth-token');
+        console.log('sessionStorage token:', token ? 'exists' : 'missing');
+      }
+      
+      // Check for other possible token names
+      if (!token) {
+        token = localStorage.getItem('token') || localStorage.getItem('authToken');
+        console.log('Alternative token names:', token ? 'exists' : 'missing');
+      }
     }
     
+    // Check cookies as last resort
     if (!token && typeof document !== 'undefined') {
-      token = document.cookie
+      const cookieToken = document.cookie
         .split('; ')
         .find(row => row.startsWith('auth-token='))
         ?.split('=')[1];
+      
+      if (cookieToken) {
+        token = cookieToken;
+        console.log('Cookie token found');
+      }
     }
     
-    console.log('Token for refresh:', token ? 'exists' : 'missing');
+    console.log('Final token status:', token ? 'exists' : 'MISSING');
     
-    // Create headers with token (same as save function)
+    // If no token found, throw early
+    if (!token) {
+      throw new Error('No authentication token found. Please log in again.');
+    }
+    
+    // Create headers with proper token format
     const headers: { [key: string]: string } = {
-  'Content-Type': 'application/json',
-};
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}` // Always include if we have a token
+    };
     
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+    console.log('Request headers:', {
+      ...headers,
+      'Authorization': token ? 'Bearer [TOKEN_EXISTS]' : 'MISSING'
+    });
     
     const response = await fetch('/api/apiaries', {
       method: 'GET',
-      credentials: 'include',
-      headers, // Include the Authorization header
+      credentials: 'include', // This ensures cookies are sent
+      headers,
     });
+    
+    console.log('Response status:', response.status);
+    console.log('Response headers:', Object.fromEntries(response.headers.entries()));
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -371,32 +411,48 @@ const refreshApiariesFromDatabase = async () => {
         statusText: response.statusText,
         body: errorText
       });
+      
+      if (response.status === 401) {
+        // Clear invalid token
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('auth-token');
+          sessionStorage.removeItem('auth-token');
+        }
+        throw new Error('Authentication failed. Please log in again.');
+      }
+      
       throw new Error(`Failed to fetch apiaries: ${response.status} ${response.statusText}`);
     }
     
     const apiaries = await response.json();
-    console.log('Fetched apiaries:', apiaries);
+    console.log('Fetched apiaries count:', apiaries.length);
     
     setAvailableApiaries(apiaries);
     console.log('Apiaries list refreshed successfully!');
     
   } catch (error: unknown) {
-  console.error('Error refreshing apiaries:', error);
-  
-  if (error instanceof Error) {
-    if (
-      error.message.includes('401') ||
-      error.message.toLowerCase().includes('authentication')
-    ) {
-      console.error('Authentication failed during refresh');
-      // Optionally redirect:
-      // window.location.href = '/login';
+    console.error('Error refreshing apiaries:', error);
+    
+    if (error instanceof Error) {
+      if (
+        error.message.includes('401') ||
+        error.message.toLowerCase().includes('authentication') ||
+        error.message.includes('No authentication token')
+      ) {
+        console.error('Authentication failed during refresh');
+        // Show user-friendly message
+        alert('Your session has expired. Please log in again.');
+        // Redirect to login page
+        window.location.href = '/login';
+      } else {
+        // Show other errors to user
+        alert(`Failed to load apiaries: ${error.message}`);
+      }
+    } else {
+      console.error('Unexpected error:', error);
+      alert('An unexpected error occurred while loading apiaries.');
     }
-  } else {
-    // If you want to catch non-Error throwables:
-    console.error('Unexpected error:', error);
   }
-}
 };
 // You should also add a useEffect to load apiaries when the component mounts:
 useEffect(() => {
@@ -914,7 +970,8 @@ const handleBuyTokens = () => {
 };
 
   const createBatch = async () => {
-  if (!batchNumber || selectedApiaries.length === 0) {
+  // Improved validation with proper array checking
+  if (!batchNumber?.trim() || !Array.isArray(selectedApiaries) || selectedApiaries.length === 0) {
     setNotification({
       show: true,
       message: 'Please fill in batch number and select at least one apiary',
@@ -951,19 +1008,25 @@ const handleBuyTokens = () => {
       id: apiary.id,
       name: apiary.name,
       number: apiary.number,
-      hiveCount: apiary.hiveCount,
-      kilosCollected: apiary.kilosCollected,
-      locationId: apiary.location?.id || null, // Use location ID if available
-      location: apiary.location // Include full location data
+      hiveCount: apiary.hiveCount || 0,
+      kilosCollected: apiary.kilosCollected ?? 0,
+      locationId: apiary.location?.id || null,
+      location: apiary.location || null
     }));
 
     const formData = {
-      batchNumber: batchNumber,
+      batchNumber: batchNumber.trim(),
       batchName: finalBatchName,
-      apiaries: apiariesForBatch, // Use transformed apiaries data
+      apiaries: apiariesForBatch,
       totalHives: selectedApiaries.reduce((sum, apiary) => sum + (apiary.hiveCount || 0), 0),
-      totalHoney: selectedApiaries.reduce((sum, apiary) => sum + (apiary.kilosCollected || 0), 0),
+      totalHoney: selectedApiaries.reduce(
+  (sum, apiary) => sum + (apiary.kilosCollected ?? 0),
+  0
+),
+
     };
+
+    console.log('Creating batch with data:', formData); // Debug log
 
     const response = await fetch('/api/create-batch', {
       method: 'POST',
@@ -980,12 +1043,14 @@ const handleBuyTokens = () => {
       throw new Error(result.message || 'Failed to create batch');
     }
 
-    // Update data state with new batch
-    setData({
-      ...data,
-      batches: [result.batch, ...data.batches],
-      tokenStats: data.tokenStats,
-    });
+    // Update data state with new batch (ensure data exists)
+    if (data && data.batches) {
+      setData({
+        ...data,
+        batches: [result.batch, ...data.batches],
+        tokenStats: data.tokenStats,
+      });
+    }
 
     setNotification({
       show: true,
@@ -996,10 +1061,11 @@ const handleBuyTokens = () => {
       setNotification({ show: false, message: '' });
     }, 5000);
 
-    // Reset form data
+    // Reset form data and close modal
     setBatchNumber('');
     setBatchName('');
     setSelectedApiaries([]);
+    setSelectedDropdownApiary(''); // Reset dropdown state
     setShowBatchModal(false);
 
   } catch (error) {
@@ -1016,6 +1082,8 @@ const handleBuyTokens = () => {
     setLoading(false);
   }
 };
+
+
 const [showAllBatches, setShowAllBatches] = useState(false);
 const [expandedBatches, setExpandedBatches] = useState<string[]>([]);
 
@@ -1226,7 +1294,7 @@ useEffect(() => {
       
       // Common map configuration
       const mapConfig = {
-        center: { lat: 52.0907, lng: 5.1214 },
+        center: { lat: 52.0907, lng: 5.1214 }, // Netherlands coordinates
         zoom: 8,
         styles: [
           {
@@ -1257,17 +1325,15 @@ useEffect(() => {
         fullscreenControl: true
       };
 
-      // Initialize main map
+      // Initialize main map for displaying apiary markers
       if (mapRef.current) {
         console.log('Initializing main map...');
         const map = new window.google.maps.Map(mapRef.current, mapConfig);
         googleMapRef.current = map;
         console.log('Main map initialized');
 
-        // Add click listener to main map
-        map.addListener('click', (event) => {
-          handleMapClick(event, mapRef.current, 'main');
-        });
+        // Add apiary markers to main map
+        addApiaryMarkersToMap(map);
       } else {
         console.log('Main map ref not found');
       }
@@ -1300,9 +1366,9 @@ useEffect(() => {
               miniMap.setCenter(mapConfig.center);
             }, 100);
 
-            // Add click listener to mini map
-            miniMap.addListener('click', (event) => {
-              handleMapClick(event, miniMapRef.current, 'mini');
+            // Add click listener to mini map for apiary creation
+            miniMap.addListener('click', (event: any) => {
+              handleMiniMapClick(event);
             });
             
             console.log('Mini map initialization complete');
@@ -1332,47 +1398,185 @@ useEffect(() => {
     }
   };
 
-  // Helper function to handle map clicks for both maps
-  const handleMapClick = (event, mapContainer, mapType) => {
+  // Function to add apiary markers to the main map
+  const addApiaryMarkersToMap = (map: any) => {
+    // Clear existing markers
+    if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current)) {
+      apiaryMarkers.current.forEach((marker: any) => marker.setMap(null));
+    }
+    apiaryMarkers.current = [];
+
+    // Add markers for each apiary
+    if (Array.isArray(availableApiaries) && availableApiaries.length > 0) {
+      console.log('Adding apiary markers:', availableApiaries.length);
+      
+      availableApiaries.forEach((apiary) => {
+
+         console.log('Processing apiary:', apiary.name, 'Location:', apiary.location); // Add this line
+
+        if (apiary.location && apiary.location.latitude && apiary.location.longitude) {
+
+           const lat = typeof apiary.location.latitude === 'string' 
+      ? parseFloat(apiary.location.latitude) 
+      : apiary.location.latitude;
+    const lng = typeof apiary.location.longitude === 'string' 
+      ? parseFloat(apiary.location.longitude) 
+      : apiary.location.longitude;
+    
+    console.log('Creating marker at:', { lat, lng }); // Add this line
+
+          const marker = new window.google.maps.Marker({
+            position: {
+              lat: typeof apiary.location.latitude === 'string' 
+                ? parseFloat(apiary.location.latitude) 
+                : apiary.location.latitude,
+              lng: typeof apiary.location.longitude === 'string' 
+                ? parseFloat(apiary.location.longitude) 
+                : apiary.location.longitude
+            },
+            map: map,
+            title: `${apiary.name} (${apiary.number})`,
+            icon: {
+              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                <svg width="40" height="50" viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" style="stop-color:#FCD34D;stop-opacity:1" />
+                      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M20 0C13.373 0 8 5.373 8 12c0 9 12 28 12 28s12-19 12-28c0-6.627-5.373-12-12-12z" fill="url(#grad)" stroke="#D97706" stroke-width="2"/>
+                  <circle cx="20" cy="12" r="6" fill="white"/>
+                  <text x="20" y="17" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="#F59E0B">🍯</text>
+                </svg>
+              `),
+              scaledSize: new window.google.maps.Size(40, 50),
+              anchor: new window.google.maps.Point(20, 50)
+            },
+            animation: window.google.maps.Animation.DROP
+          });
+
+          // Add hover info window
+          const infoWindow = new window.google.maps.InfoWindow({
+            content: `
+              <div style="padding: 8px; min-width: 200px;">
+                <h3 style="margin: 0 0 8px 0; color: #1f2937; font-size: 16px; font-weight: bold;">
+                  ${apiary.name}
+                </h3>
+                <div style="color: #6b7280; font-size: 14px; line-height: 1.4;">
+                  <div><strong>ID:</strong> ${apiary.number}</div>
+                  <div><strong>Hives:</strong> ${apiary.hiveCount}</div>
+                  <div><strong>Honey:</strong> ${apiary.honeyCollected} kg</div>
+                </div>
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 12px;">
+                  Click for more details
+                </div>
+              </div>
+            `
+          });
+
+          // Add event listeners
+          marker.addListener('click', () => {
+            console.log('Apiary marker clicked:', apiary.name);
+            setSelectedApiary(apiary);
+          });
+
+          // Show info window on hover
+          marker.addListener('mouseover', () => {
+            infoWindow.open(map, marker);
+          });
+
+          // Hide info window when mouse leaves
+          marker.addListener('mouseout', () => {
+            infoWindow.close();
+          });
+
+          // Store marker reference
+          if (Array.isArray(apiaryMarkers.current)) {
+            apiaryMarkers.current.push(marker);
+          }
+        }
+      });
+
+      // Adjust map bounds to fit all markers if there are any
+      if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current) && apiaryMarkers.current.length > 0) {
+        const bounds = new window.google.maps.LatLngBounds();
+        apiaryMarkers.current.forEach((marker: any) => {
+          const position = marker.getPosition();
+          if (position) {
+            bounds.extend(position);
+          }
+        });
+        
+        
+        if (apiaryMarkers.current.length === 1) {
+          // If only one marker, center on it with a reasonable zoom
+          const position = apiaryMarkers.current[0].getPosition();
+          if (position) {
+            map.setCenter(position);
+            map.setZoom(15);
+          }
+        } else {
+          // If multiple markers, fit bounds
+          map.fitBounds(bounds);
+          
+          // Ensure minimum zoom level
+          const listener = window.google.maps.event.addListener(map, 'bounds_changed', () => {
+            if (map.getZoom() && map.getZoom() > 18) {
+              map.setZoom(18);
+            }
+            window.google.maps.event.removeListener(listener);
+          });
+        }
+      }
+    } else {
+      console.log('No apiaries to display on map');
+    }
+  };
+
+  // Helper function to handle mini map clicks for apiary creation
+  const handleMiniMapClick = (event: any) => {
     const lat = event.latLng?.lat();
     const lng = event.latLng?.lng();
     
-    if (!mapContainer || !lat || !lng || !event.latLng) return;
+    if (!lat || !lng) return;
     
-    console.log(`${mapType} map clicked at:`, { lat, lng });
+    console.log('Mini map clicked for apiary location:', { lat, lng });
     
-    // Get the exact pixel position of the click relative to the map container
-    const mapRect = mapContainer.getBoundingClientRect();
-    const overlay = new window.google.maps.OverlayView();
+    // Update the apiary form data with the selected location - FIXED TYPE ISSUE
+    setApiaryFormData((prev) => ({
+      ...prev,
+      location: {
+        latitude: lat, // Now number instead of string
+        longitude: lng, // Now number instead of string
+        name: `Location ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        id: Date.now() // Add required id field
+      }
+    }));
+
+    // Add a temporary marker to show selected location
+    if (tempMarker.current) {
+      tempMarker.current.setMap(null);
+    }
     
-    overlay.onAdd = function() {
-      // Get the pixel position of the clicked lat/lng
-      const projection = this.getProjection();
-      if (!projection) return;
-      
-      const pixelPosition = projection.fromLatLngToContainerPixel(event.latLng);
-      if (!pixelPosition) return;
-      
-      // Calculate absolute position on the page
-      const clickX = mapRect.left + pixelPosition.x + window.scrollX;
-      const clickY = mapRect.top + pixelPosition.y + window.scrollY;
-      
-      console.log(`${mapType} map clicked at position:`, { lat, lng, x: clickX, y: clickY });
-      
-      // Update state for location confirmation
-      setSelectedLocation({ lat, lng });
-      setClickPosition({ x: clickX, y: clickY });
-      setShowLocationConfirm(true);
-      
-      // Remove the overlay after getting the position
-      overlay.setMap(null);
-    };
-    
-    overlay.draw = function() {};
-    
-    // Set overlay to the appropriate map
-    const targetMap = mapType === 'main' ? googleMapRef.current : miniGoogleMapRef.current;
-    overlay.setMap(targetMap);
+    if (miniGoogleMapRef.current) {
+      tempMarker.current = new window.google.maps.Marker({
+        position: { lat, lng },
+        map: miniGoogleMapRef.current,
+        title: 'Selected Apiary Location',
+        icon: {
+          url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+            <svg width="30" height="40" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
+              <path d="M15 0C9.477 0 5 4.477 5 10c0 7.5 10 25 10 25s10-17.5 10-25c0-5.523-4.477-10-10-10z" fill="#10B981" stroke="#059669" stroke-width="2"/>
+              <circle cx="15" cy="10" r="4" fill="white"/>
+              <text x="15" y="15" font-family="Arial" font-size="10" font-weight="bold" text-anchor="middle" fill="#10B981">✓</text>
+            </svg>
+          `),
+          scaledSize: new window.google.maps.Size(30, 40),
+          anchor: new window.google.maps.Point(15, 40)
+        }
+      });
+    }
   };
 
   // Load Google Maps API if not already loaded
@@ -1398,8 +1602,16 @@ useEffect(() => {
     if (miniGoogleMapRef.current) {
       window.google?.maps?.event?.clearInstanceListeners(miniGoogleMapRef.current);
     }
+    
+    // Clean up markers
+    if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current)) {
+      apiaryMarkers.current.forEach((marker: any) => marker.setMap(null));
+    }
+    if (tempMarker.current) {
+      tempMarker.current.setMap(null);
+    }
   };
-}, [showApiaryModal]);
+}, [showApiaryModal, availableApiaries]);
 
 
 
@@ -1716,7 +1928,7 @@ const handleLocationCancel = () => {
      {/* Create Batch Modal */}
 {showBatchModal && (
   <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-30">
-    <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto mx-4">
+    <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-screen overflow-y-auto mx-4">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-xl font-bold">Create New Batch</h3>
         <button
@@ -1803,24 +2015,78 @@ const handleLocationCancel = () => {
             </div>
           ) : (
             <select
-              value=""
+              value={selectedDropdownApiary || ""}
               onChange={(e) => {
                 const apiaryId = e.target.value;
-                if (apiaryId && Array.isArray(selectedApiaries) && !selectedApiaries.find(a => a.id === apiaryId)) {
-                  const apiary = availableApiaries.find(a => a.id === apiaryId);
+                console.log('Selected apiary ID (string):', apiaryId, typeof apiaryId);
+                
+                setSelectedDropdownApiary(apiaryId);
+                
+                if (apiaryId) {
+                  // Find the selected apiary using flexible matching
+                  const apiary = availableApiaries.find(a => {
+                    // Convert both values to strings for consistent comparison
+                    const apiaryIdStr = String(a.id);
+                    const searchIdStr = String(apiaryId);
+                    
+                    return apiaryIdStr === searchIdStr;
+                  });
+                  
+                  console.log('Available apiaries:', availableApiaries.map(a => ({id: a.id, type: typeof a.id})));
+                  console.log('Found apiary:', apiary);
+                  
                   if (apiary) {
-                    setSelectedApiaries(prev => [...prev, { ...apiary, kilosCollected: 0 }]);
+                    // Ensure selectedApiaries is an array
+                    const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
+                    
+                    // Check if apiary is not already selected (using flexible ID matching)
+                    const isAlreadySelected = currentSelected.some(a => 
+                      a.id === apiary.id || 
+                      String(a.id) === String(apiary.id)
+                    );
+                    
+                    console.log('Is already selected:', isAlreadySelected);
+                    
+                    if (!isAlreadySelected) {
+                      // Add the apiary with batchHoneyCollected property (separate from stored kilosCollected)
+                      const newApiary = { 
+                        ...apiary, 
+                        batchHoneyCollected: 0 // This is the honey collected specifically for this batch
+                      };
+                      
+                      setSelectedApiaries(prev => {
+                        const prevArray = Array.isArray(prev) ? prev : [];
+                        const newArray = [...prevArray, newApiary];
+                        console.log('New selected apiaries:', newArray);
+                        return newArray;
+                      });
+                      
+                      // Reset dropdown after successful addition
+                      setTimeout(() => setSelectedDropdownApiary(''), 100);
+                    } else {
+                      // Reset dropdown if apiary already selected
+                      setSelectedDropdownApiary('');
+                      alert('This apiary is already selected!');
+                    }
+                  } else {
+                    console.error('Apiary not found with ID:', apiaryId);
+                    console.error('Available apiaries IDs:', availableApiaries.map(a => `${a.id} (${typeof a.id})`));
+                    setSelectedDropdownApiary('');
                   }
                 }
-                // Reset the select value
-                (e.target as HTMLSelectElement).value = "";
               }}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
             >
               <option value="">Select an apiary to add...</option>
-              {Array.isArray(availableApiaries) && Array.isArray(selectedApiaries) && 
+              {Array.isArray(availableApiaries) && 
                 availableApiaries
-                  .filter(apiary => !selectedApiaries.find(selected => selected.id === apiary.id))
+                  .filter(apiary => {
+                    const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
+                    return !currentSelected.some(selected => 
+                      selected.id === apiary.id || 
+                      String(selected.id) === String(apiary.id)
+                    );
+                  })
                   .map(apiary => (
                     <option key={apiary.id} value={apiary.id}>
                       {apiary.name} (ID: {apiary.number}) - {apiary.hiveCount} hives
@@ -1832,48 +2098,122 @@ const handleLocationCancel = () => {
         </div>
 
         {/* Selected Apiaries List */}
-        {selectedApiaries.length > 0 && (
-          <div className="space-y-3">
+        {Array.isArray(selectedApiaries) && selectedApiaries.length > 0 && (
+          <div className="space-y-4">
             <h5 className="font-medium text-gray-800">Selected Apiaries for this Batch:</h5>
             {selectedApiaries.map((apiary, index) => (
               <div key={apiary.id} className="border rounded-lg p-4 bg-gray-50">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h6 className="font-medium text-gray-800">{apiary.name}</h6>
-                    <p className="text-sm text-gray-600">ID: {apiary.number} | {apiary.hiveCount} hives</p>
-                    <p className="text-xs text-gray-500">
-                      Location: {apiary.location?.name || 'No location set'}
-                    </p>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex-1">
+                    <h6 className="font-medium text-gray-800 text-lg">{apiary.name}</h6>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                      {/* Apiary Information - Read Only */}
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide">
+                            Apiary ID/Number
+                          </label>
+                          <input
+                            type="text"
+                            value={apiary.number}
+                            readOnly
+                            className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-gray-700 text-sm cursor-not-allowed"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide">
+                            Number of Hives
+                          </label>
+                          <input
+                            type="number"
+                            value={apiary.hiveCount}
+                            readOnly
+                            className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-gray-700 text-sm cursor-not-allowed"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide">
+                            Total Honey Collected (kg)
+                          </label>
+                          <input
+                            type="number"
+                            value={apiary.kilosCollected || 0}
+                            readOnly
+                            className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-gray-700 text-sm cursor-not-allowed"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Stored: {apiary.kilosCollected || 0}kg | 
+                            Raw data: {JSON.stringify(apiary.kilosCollected)}
+                          </p>
+                        </div>
+                        
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide">
+                            Location
+                          </label>
+                          <input
+                            type="text"
+                            value={
+                              apiary.latitude !== undefined && apiary.longitude !== undefined
+                                ? `${apiary.latitude?.toFixed(6)}, ${apiary.longitude?.toFixed(6)}` 
+                                : 'No location set'
+                            }
+                            readOnly
+                            className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-gray-700 text-sm cursor-not-allowed"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Location data: lat: {apiary.latitude}, lng: {apiary.longitude}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
+                  
                   <button
                     type="button"
-                    onClick={() => setSelectedApiaries(prev => prev.filter(a => a.id !== apiary.id))}
-                    className="text-red-500 hover:text-red-700 text-sm flex items-center"
+                    onClick={() => setSelectedApiaries(prev => {
+                      const prevArray = Array.isArray(prev) ? prev : [];
+                      return prevArray.filter(a => a.id !== apiary.id);
+                    })}
+                    className="text-red-500 hover:text-red-700 text-sm flex items-center ml-4 hover:bg-red-50 px-2 py-1 rounded"
                   >
                     <Trash2 className="h-4 w-4 mr-1" />
                     Remove
                   </button>
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Honey Collected from this Apiary (kg) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={apiary.kilosCollected}
-                    onChange={(e) => {
-                      const newValue = parseFloat(e.target.value) || 0;
-                      setSelectedApiaries(prev => prev.map(a => 
-                        a.id === apiary.id ? { ...a, kilosCollected: newValue } : a
-                      ));
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                    placeholder="0.0"
-                    required
-                  />
+                {/* Batch-specific honey collection - Mandatory */}
+                <div className="border-t pt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Honey Collected for THIS Batch (kg) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={apiary.kilosCollected || ''}
+                      onChange={(e) => {
+                        const newValue = parseFloat(e.target.value) || 0;
+                        setSelectedApiaries(prev => {
+                          const prevArray = Array.isArray(prev) ? prev : [];
+                          return prevArray.map(a => 
+                            a.id === apiary.id ? { ...a, batchHoneyCollected: newValue } : a
+                          );
+                        });
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                      placeholder="0.0"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      This is the amount of honey collected from this apiary specifically for this batch
+                    </p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -1884,8 +2224,8 @@ const handleLocationCancel = () => {
       {/* Summary Section */}
       {selectedApiaries.length > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <h5 className="font-medium text-blue-900 mb-2">Batch Summary</h5>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+          <h5 className="font-medium text-blue-900 mb-3">Batch Summary</h5>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
               <p className="text-blue-700 font-medium">Total Apiaries</p>
               <p className="text-blue-900 text-lg font-bold">{selectedApiaries.length}</p>
@@ -1897,7 +2237,13 @@ const handleLocationCancel = () => {
               </p>
             </div>
             <div>
-              <p className="text-blue-700 font-medium">Total Honey (kg)</p>
+              <p className="text-blue-700 font-medium">Batch Honey (kg)</p>
+              <p className="text-blue-900 text-lg font-bold">
+                {selectedApiaries.reduce((sum, apiary) => sum + (apiary.batchHoneyCollected || 0), 0).toFixed(1)}
+              </p>
+            </div>
+            <div>
+              <p className="text-blue-700 font-medium">Total Stored Honey (kg)</p>
               <p className="text-blue-900 text-lg font-bold">
                 {selectedApiaries.reduce((sum, apiary) => sum + (apiary.kilosCollected || 0), 0).toFixed(1)}
               </p>
@@ -1905,6 +2251,33 @@ const handleLocationCancel = () => {
           </div>
         </div>
       )}
+      
+      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs">
+        <p><strong>🔍 Apiary Data Debug:</strong></p>
+        {Array.isArray(availableApiaries) && availableApiaries.map(apiary => (
+          <div key={apiary.id} className="mt-2 p-2 bg-white rounded border">
+            <p><strong>{apiary.name}</strong> (ID: {apiary.id})</p>
+            <p>• Number: {apiary.number}</p>
+            <p>• Hive Count: {apiary.hiveCount}</p>
+            <p>• Kilos Collected: {apiary.kilosCollected} (type: {typeof apiary.kilosCollected})</p>
+            <p>• Location: lat: {apiary.latitude}, lng: {apiary.longitude}</p>
+            <p>• Full Object Keys: {Object.keys(apiary).join(', ')}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mb-4 p-2 bg-yellow-100 border border-yellow-300 rounded text-xs">
+        <p><strong>Debug Info:</strong></p>
+        <p>Batch Number: "{batchNumber}" (length: {batchNumber?.length || 0})</p>
+        <p>Selected Apiaries: {Array.isArray(selectedApiaries) ? selectedApiaries.length : 'Not an array'}</p>
+        <p>All apiaries have batch honey defined?: {Array.isArray(selectedApiaries) && selectedApiaries.every(a => a.batchHoneyCollected !== undefined && a.batchHoneyCollected !== null && a.batchHoneyCollected !== '') ? 'YES' : 'NO'}</p>
+        <p>Button should be enabled: {
+          batchNumber?.trim() && 
+          Array.isArray(selectedApiaries) && 
+          selectedApiaries.length > 0 && 
+          selectedApiaries.every(a => a.batchHoneyCollected !== undefined && a.batchHoneyCollected !== null && a.batchHoneyCollected !== '') ? 'YES' : 'NO'
+        }</p>
+      </div>
 
       {/* Action Buttons */}
       <div className="flex justify-end space-x-3 pt-4 border-t">
@@ -1914,6 +2287,7 @@ const handleLocationCancel = () => {
             setBatchNumber('');
             setBatchName('');
             setSelectedApiaries([]);
+            setSelectedDropdownApiary('');
           }}
           className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
         >
@@ -1921,9 +2295,17 @@ const handleLocationCancel = () => {
         </button>
         <button
           onClick={createBatch}
-          disabled={!batchNumber || selectedApiaries.length === 0}
+          disabled={
+            !batchNumber?.trim() || 
+            !Array.isArray(selectedApiaries) || 
+            selectedApiaries.length === 0 ||
+            !selectedApiaries.every(apiary => apiary.batchHoneyCollected !== undefined && apiary.batchHoneyCollected !== null && apiary.batchHoneyCollected !== '')
+          }
           className={`px-6 py-2 rounded-md text-white font-medium transition-colors ${
-            batchNumber && selectedApiaries.length > 0
+            batchNumber?.trim() && 
+            Array.isArray(selectedApiaries) && 
+            selectedApiaries.length > 0 &&
+            selectedApiaries.every(apiary => apiary.batchHoneyCollected !== undefined && apiary.batchHoneyCollected !== null && apiary.batchHoneyCollected !== '')
               ? 'bg-green-600 hover:bg-green-700' 
               : 'bg-gray-300 cursor-not-allowed'
           }`}
@@ -2107,25 +2489,46 @@ const handleLocationCancel = () => {
                     Quick Select from Saved Locations
                   </label>
                   <select
-                    value=""
-                    onChange={(e) => {
-                      const locationId = e.target.value;
-                      if (locationId) {
-                        const location = savedApiaryLocations.find(l => l.id?.toString() === locationId);
-                        if (location) {
-                          setApiaryFormData(prev => ({ ...prev, location }));
-                        }
-                      }
-                    }}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
-                  >
-                    <option value="">Choose a saved location...</option>
-                    {savedApiaryLocations.map(location => (
-                      <option key={location.id} value={location.id}>
-                        {location.name} ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
-                      </option>
-                    ))}
-                  </select>
+  value="" // Keep this as empty to always show placeholder
+  onChange={(e) => {
+    const apiaryId = e.target.value;
+    if (apiaryId) {
+      // Ensure selectedApiaries is an array
+      const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
+      
+      // Check if apiary is not already selected
+      const isAlreadySelected = currentSelected.some(a => a.id === apiaryId);
+      
+      if (!isAlreadySelected) {
+        const apiary = availableApiaries.find(a => a.id === apiaryId);
+        if (apiary) {
+          setSelectedApiaries(prev => {
+            const prevArray = Array.isArray(prev) ? prev : [];
+            return [...prevArray, { ...apiary, kilosCollected: 0 }];
+          });
+        }
+      }
+      
+      // Reset the select value to empty after selection
+      e.target.value = "";
+    }
+  }}
+  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+>
+  <option value="">Select an apiary to add...</option>
+  {Array.isArray(availableApiaries) && 
+    availableApiaries
+      .filter(apiary => {
+        const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
+        return !currentSelected.some(selected => selected.id === apiary.id);
+      })
+      .map(apiary => (
+        <option key={apiary.id} value={apiary.id}>
+          {apiary.name} (ID: {apiary.number}) - {apiary.hiveCount} hives
+        </option>
+      ))
+  }
+</select>
                 </div>
               )}
             </div>
@@ -2362,84 +2765,111 @@ const handleLocationCancel = () => {
       </div>
     </div>
   </div>
-  {/* Google Maps Section - Same height */}
-  <div className="bg-white p-4 rounded-lg shadow text-black h-fit">
-    <h2 className="text-lg font-semibold mb-4">Apiary Locations</h2>
-    <p className="text-sm text-gray-600 mb-3">Click on the map to create a batch for that location</p>
-    <div 
-      ref={mapRef} 
-      className="w-full rounded-lg border border-gray-300 cursor-pointer"
-      style={{ height: '450px' }}
-    />
-  </div>
+
+  {/* Google Maps Section - Display Apiary Markers */}
+<div className="bg-white p-4 rounded-lg shadow text-black h-fit">
+  <h2 className="text-lg font-semibold mb-4">Apiary Locations</h2>
+  <p className="text-sm text-gray-600 mb-3">View all your apiaries on the map. Click markers to see details.</p>
+  <div 
+    ref={mapRef}
+    className="w-full rounded-lg border border-gray-300"
+    style={{ height: '450px' }}
+  />
+</div>
 </div>
 
-{/* Location Confirmation Modal */}
-{showLocationConfirm && selectedLocation && (
+
+{/* Apiary Details Modal - Shows when clicking on a marker */}
+{selectedApiary && (
   <>
-    {/* Invisible backdrop for click-outside-to-close */}
+    {/* Modal backdrop */}
     <div 
-      className="fixed inset-0 z-40"
-      onClick={handleLocationCancel}
-    />
-    
-    {/* Comic bubble popup positioned exactly at click location */}
-    <div 
-      className="fixed z-50 pointer-events-none"
-      style={{
-        left: `${clickPosition.x}px`,
-        top: `${clickPosition.y}px`,
-        transform: 'translate(-50%, -100%)', // Center horizontally, position above click point
-      }}
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={() => setSelectedApiary(null)}
     >
-      <div className="relative pointer-events-auto">
-        {/* Comic bubble with tail pointing down to click location */}
-        <div className="bg-white rounded-2xl p-4 shadow-2xl border-4 border-blue-400 max-w-xs relative transform hover:scale-105 transition-transform duration-200 mb-2">
-          
-          {/* Bubble content */}
-          <div className="text-center">
-            <div className="text-2xl mb-2">📍</div>
-            <h3 className="font-bold text-lg text-gray-800 mb-2">Save Apiary Location?</h3>
-            <p className="text-sm text-gray-600 mb-1">
-              Lat: {selectedLocation.lat.toFixed(4)}
-            </p>
-            <p className="text-sm text-gray-600 mb-4">
-              Lng: {selectedLocation.lng.toFixed(4)}
-            </p>
-            <p className="text-xs text-gray-500 mb-4">
-              Save this location for future batch creation?
-            </p>
-            
-            <div className="flex space-x-2">
-              <button
-                onClick={handleLocationCancel}
-                className="flex-1 px-3 py-2 text-xs bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-  onClick={() => handleLocationConfirm()}
-  disabled={isSaving}
-  className="flex-1 px-3 py-2 text-xs bg-blue-400 text-white rounded-full hover:bg-blue-500 transition-colors font-semibold flex items-center justify-center disabled:opacity-50"
->
-  <MapPin className="w-3 h-3 mr-1" />
-  {isSaving ? 'Saving...' : 'Save!'}
-</button>
+      <div 
+        className="bg-white rounded-xl shadow-2xl w-full max-w-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-4 rounded-t-xl">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-3">
+              <div className="bg-white/20 p-2 rounded-lg">
+                <MapPin className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">{selectedApiary.name}</h3>
+                <p className="text-blue-100 text-sm">Apiary Details</p>
+              </div>
             </div>
+            <button
+              onClick={() => setSelectedApiary(null)}
+              className="text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
         </div>
-        
-        {/* Bubble tail pointing down to exact click location */}
-        <div className="absolute left-1/2 transform -translate-x-1/2 -bottom-1">
-          {/* Outer tail (border color) */}
-          <div className="w-0 h-0 border-l-[15px] border-r-[15px] border-t-[20px] border-l-transparent border-r-transparent border-t-blue-400" />
-          {/* Inner tail (background color) */}
-          <div className="absolute w-0 h-0 border-l-[12px] border-r-[12px] border-t-[16px] border-l-transparent border-r-transparent border-t-white top-0 left-1/2 transform -translate-x-1/2" />
+
+        {/* Modal Content */}
+        <div className="p-6">
+          <div className="space-y-4">
+            {/* Apiary ID */}
+            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              <span className="text-sm font-medium text-gray-600">Apiary ID:</span>
+              <span className="font-semibold text-gray-800">{selectedApiary.number}</span>
+            </div>
+
+            {/* Number of Hives */}
+            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              <span className="text-sm font-medium text-gray-600">Number of Hives:</span>
+              <span className="font-semibold text-gray-800">{selectedApiary.hiveCount}</span>
+            </div>
+
+            {/* Honey Collected */}
+            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              <span className="text-sm font-medium text-gray-600">Honey Collected:</span>
+              <span className="font-semibold text-gray-800">{selectedApiary.honeyCollected} kg</span>
+            </div>
+
+            {/* Location Coordinates */}
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <span className="text-sm font-medium text-gray-600 block mb-2">Location:</span>
+              <div className="text-sm text-gray-800">
+                <div>Latitude: {selectedApiary.location?.latitude?.toFixed(6)}</div>
+                <div>Longitude: {selectedApiary.location?.longitude?.toFixed(6)}</div>
+              </div>
+            </div>
+
+            {/* Created Date (if available) */}
+            {selectedApiary.createdAt && (
+              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm font-medium text-gray-600">Created:</span>
+                <span className="text-sm text-gray-800">
+                  {new Date(selectedApiary.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="bg-gray-50 px-6 py-4 rounded-b-xl border-t border-gray-200">
+          <div className="flex justify-end space-x-3">
+            <button
+              onClick={() => setSelectedApiary(null)}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>
   </>
 )}
+
      
       {/* Certification Evolution Chart Section */}
 <div className="bg-white p-4 rounded-lg shadow text-black mb-6">
