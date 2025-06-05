@@ -1399,140 +1399,152 @@ useEffect(() => {
   };
 
   // Function to add apiary markers to the main map
-  const addApiaryMarkersToMap = (map: any) => {
-    // Clear existing markers
-    if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current)) {
-      apiaryMarkers.current.forEach((marker: any) => marker.setMap(null));
-    }
-    apiaryMarkers.current = [];
+  // Function to add apiary markers to the main map
+const addApiaryMarkersToMap = (map: any) => {
+  // Clear existing markers
+  if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current)) {
+    apiaryMarkers.current.forEach((marker: any) => marker.setMap(null));
+  }
+  apiaryMarkers.current = [];
 
-    // Add markers for each apiary
-    if (Array.isArray(availableApiaries) && availableApiaries.length > 0) {
-      console.log('Adding apiary markers:', availableApiaries.length);
-      
-      availableApiaries.forEach((apiary) => {
-
-         console.log('Processing apiary:', apiary.name, 'Location:', apiary.location); // Add this line
-
-        if (apiary.location && apiary.location.latitude && apiary.location.longitude) {
-
-           const lat = typeof apiary.location.latitude === 'string' 
-      ? parseFloat(apiary.location.latitude) 
-      : apiary.location.latitude;
-    const lng = typeof apiary.location.longitude === 'string' 
-      ? parseFloat(apiary.location.longitude) 
-      : apiary.location.longitude;
+  // Add markers for each apiary
+  if (Array.isArray(availableApiaries) && availableApiaries.length > 0) {
+    console.log('Adding apiary markers:', availableApiaries.length);
     
-    console.log('Creating marker at:', { lat, lng }); // Add this line
+    availableApiaries.forEach((apiary, index) => {
+      if (index < 3) { // Only log first 3 to avoid spam
+        console.log('Full apiary object:', JSON.stringify(apiary, null, 2));
+      }
 
-          const marker = new window.google.maps.Marker({
-            position: {
-              lat: typeof apiary.location.latitude === 'string' 
-                ? parseFloat(apiary.location.latitude) 
-                : apiary.location.latitude,
-              lng: typeof apiary.location.longitude === 'string' 
-                ? parseFloat(apiary.location.longitude) 
-                : apiary.location.longitude
-            },
-            map: map,
-            title: `${apiary.name} (${apiary.number})`,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg width="40" height="50" viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" style="stop-color:#FCD34D;stop-opacity:1" />
-                      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
-                    </linearGradient>
-                  </defs>
-                  <path d="M20 0C13.373 0 8 5.373 8 12c0 9 12 28 12 28s12-19 12-28c0-6.627-5.373-12-12-12z" fill="url(#grad)" stroke="#D97706" stroke-width="2"/>
-                  <circle cx="20" cy="12" r="6" fill="white"/>
-                  <text x="20" y="17" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="#F59E0B">🍯</text>
-                </svg>
-              `),
-              scaledSize: new window.google.maps.Size(40, 50),
-              anchor: new window.google.maps.Point(20, 50)
-            },
-            animation: window.google.maps.Animation.DROP
-          });
+      console.log('Processing apiary:', apiary.name, 'Latitude:', apiary.latitude, 'Longitude:', apiary.longitude);
 
-          // Add hover info window
-          const infoWindow = new window.google.maps.InfoWindow({
-            content: `
-              <div style="padding: 8px; min-width: 200px;">
-                <h3 style="margin: 0 0 8px 0; color: #1f2937; font-size: 16px; font-weight: bold;">
-                  ${apiary.name}
-                </h3>
-                <div style="color: #6b7280; font-size: 14px; line-height: 1.4;">
-                  <div><strong>ID:</strong> ${apiary.number}</div>
-                  <div><strong>Hives:</strong> ${apiary.hiveCount}</div>
-                  <div><strong>Honey:</strong> ${apiary.honeyCollected} kg</div>
-                </div>
-                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 12px;">
-                  Click for more details
-                </div>
+      // Check if apiary has coordinates (either in nested location or directly on apiary)
+      const hasNestedLocation = apiary.location && apiary.location.latitude && apiary.location.longitude;
+      const hasDirectCoordinates = apiary.latitude && apiary.longitude;
+
+      if (hasNestedLocation || hasDirectCoordinates) {
+        // Get coordinates from the appropriate location
+        const lat = hasNestedLocation 
+          ? (typeof apiary.location.latitude === 'string' ? parseFloat(apiary.location.latitude) : apiary.location.latitude)
+          : (typeof apiary.latitude === 'string' ? parseFloat(apiary.latitude) : apiary.latitude);
+        
+        const lng = hasNestedLocation 
+          ? (typeof apiary.location.longitude === 'string' ? parseFloat(apiary.location.longitude) : apiary.location.longitude)
+          : (typeof apiary.longitude === 'string' ? parseFloat(apiary.longitude) : apiary.longitude);
+        
+        console.log('Creating marker at:', { lat, lng });
+
+        const marker = new window.google.maps.Marker({
+          position: { lat, lng },
+          map: map,
+          title: `${apiary.name} (${apiary.number})`,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg width="40" height="50" viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#FCD34D;stop-opacity:1" />
+                    <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+                  </linearGradient>
+                </defs>
+                <path d="M20 0C13.373 0 8 5.373 8 12c0 9 12 28 12 28s12-19 12-28c0-6.627-5.373-12-12-12z" fill="url(#grad)" stroke="#D97706" stroke-width="2"/>
+                <circle cx="20" cy="12" r="6" fill="white"/>
+                <text x="20" y="17" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="#F59E0B">🍯</text>
+              </svg>
+            `),
+            scaledSize: new window.google.maps.Size(40, 50),
+            anchor: new window.google.maps.Point(20, 50)
+          },
+          animation: window.google.maps.Animation.DROP
+        });
+
+        // Add hover info window
+        const infoWindow = new window.google.maps.InfoWindow({
+          content: `
+            <div style="padding: 8px; min-width: 200px;">
+              <h3 style="margin: 0 0 8px 0; color: #1f2937; font-size: 16px; font-weight: bold;">
+                ${apiary.name}
+              </h3>
+              <div style="color: #6b7280; font-size: 14px; line-height: 1.4;">
+                <div><strong>ID:</strong> ${apiary.number}</div>
+                <div><strong>Hives:</strong> ${apiary.hiveCount}</div>
+                <div><strong>Honey:</strong> ${apiary.kilosCollected || apiary.honeyCollected || 0} kg</div>
               </div>
-            `
-          });
+              <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 12px;">
+                Click for more details
+              </div>
+            </div>
+          `
+        });
 
-          // Add event listeners
-          marker.addListener('click', () => {
-            console.log('Apiary marker clicked:', apiary.name);
-            setSelectedApiary(apiary);
-          });
+        // Add event listeners
+        marker.addListener('click', () => {
+          console.log('Apiary marker clicked:', apiary.name);
+          // Create a normalized apiary object for the modal
+          const normalizedApiary = {
+            ...apiary,
+            location: hasNestedLocation ? apiary.location : {
+              latitude: lat,
+              longitude: lng
+            },
+            honeyCollected: apiary.kilosCollected || apiary.honeyCollected || 0
+          };
+          setSelectedApiary(normalizedApiary);
+        });
 
-          // Show info window on hover
-          marker.addListener('mouseover', () => {
-            infoWindow.open(map, marker);
-          });
+        // Show info window on hover
+        marker.addListener('mouseover', () => {
+          infoWindow.open(map, marker);
+        });
 
-          // Hide info window when mouse leaves
-          marker.addListener('mouseout', () => {
-            infoWindow.close();
-          });
+        // Hide info window when mouse leaves
+        marker.addListener('mouseout', () => {
+          infoWindow.close();
+        });
 
-          // Store marker reference
-          if (Array.isArray(apiaryMarkers.current)) {
-            apiaryMarkers.current.push(marker);
-          }
+        // Store marker reference
+        if (Array.isArray(apiaryMarkers.current)) {
+          apiaryMarkers.current.push(marker);
+        }
+      } else {
+        console.log('Apiary has no valid coordinates:', apiary.name);
+      }
+    });
+
+    // Adjust map bounds to fit all markers if there are any
+    if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current) && apiaryMarkers.current.length > 0) {
+      const bounds = new window.google.maps.LatLngBounds();
+      apiaryMarkers.current.forEach((marker: any) => {
+        const position = marker.getPosition();
+        if (position) {
+          bounds.extend(position);
         }
       });
-
-      // Adjust map bounds to fit all markers if there are any
-      if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current) && apiaryMarkers.current.length > 0) {
-        const bounds = new window.google.maps.LatLngBounds();
-        apiaryMarkers.current.forEach((marker: any) => {
-          const position = marker.getPosition();
-          if (position) {
-            bounds.extend(position);
-          }
-        });
-        
-        
-        if (apiaryMarkers.current.length === 1) {
-          // If only one marker, center on it with a reasonable zoom
-          const position = apiaryMarkers.current[0].getPosition();
-          if (position) {
-            map.setCenter(position);
-            map.setZoom(15);
-          }
-        } else {
-          // If multiple markers, fit bounds
-          map.fitBounds(bounds);
-          
-          // Ensure minimum zoom level
-          const listener = window.google.maps.event.addListener(map, 'bounds_changed', () => {
-            if (map.getZoom() && map.getZoom() > 18) {
-              map.setZoom(18);
-            }
-            window.google.maps.event.removeListener(listener);
-          });
+      
+      if (apiaryMarkers.current.length === 1) {
+        // If only one marker, center on it with a reasonable zoom
+        const position = apiaryMarkers.current[0].getPosition();
+        if (position) {
+          map.setCenter(position);
+          map.setZoom(15);
         }
+      } else {
+        // If multiple markers, fit bounds
+        map.fitBounds(bounds);
+        
+        // Ensure minimum zoom level
+        const listener = window.google.maps.event.addListener(map, 'bounds_changed', () => {
+          if (map.getZoom() && map.getZoom() > 18) {
+            map.setZoom(18);
+          }
+          window.google.maps.event.removeListener(listener);
+        });
       }
-    } else {
-      console.log('No apiaries to display on map');
     }
-  };
+  } else {
+    console.log('No apiaries to display on map');
+  }
+};
 
   // Helper function to handle mini map clicks for apiary creation
   const handleMiniMapClick = (event: any) => {
