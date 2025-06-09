@@ -1,4 +1,4 @@
-// /lib/auth.ts
+// /lib/auth.ts - Simplified JWT-only authentication
 import { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import LinkedInProvider from "next-auth/providers/linkedin";
@@ -6,7 +6,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from 'jsonwebtoken';
-import { getServerSession } from "next-auth/next";
+import { NextRequest } from 'next/server';
 
 const prisma = new PrismaClient();
 
@@ -46,13 +46,11 @@ export const authOptions: NextAuthOptions = {
     async signIn({ user, account, profile }) {
       if (account?.provider === "google" || account?.provider === "linkedin") {
         try {
-          // Check if user exists in our beeusers table
           const existingUser = await prisma.beeusers.findUnique({
             where: { email: user.email! },
           });
 
           if (!existingUser) {
-            // Create new user in beeusers table
             const randomPassword = Math.random().toString(36).slice(-8);
             const hashedPassword = await bcrypt.hash(randomPassword, 12);
 
@@ -62,14 +60,11 @@ export const authOptions: NextAuthOptions = {
                 lastname: (user as any).lastName || user.name?.split(" ").slice(1).join(" ") || "",
                 email: user.email!,
                 password: hashedPassword,
-                isConfirmed: true, // Auto-confirm OAuth users
+                isConfirmed: true,
                 isProfileComplete: false,
               },
             });
-
-            console.log("New user created via OAuth:", user.email);
           }
-
           return true;
         } catch (error) {
           console.error("Error during OAuth sign in:", error);
@@ -78,35 +73,35 @@ export const authOptions: NextAuthOptions = {
       }
       return true;
     },
-    async session({ session, token }) {
-      if (session.user?.email) {
-        try {
-          const dbUser = await prisma.beeusers.findUnique({
-            where: { email: session.user.email },
-            include: {
-              tokenStats: true,
-              batches: true,
-            },
-          });
+    async jwt({ token, user, account }) {
+      if (user?.email) {
+        // Get user from database and create JWT with user ID
+        const dbUser = await prisma.beeusers.findUnique({
+          where: { email: user.email },
+          select: { id: true, email: true, firstname: true, lastname: true }
+        });
 
-          if (dbUser) {
-            session.user.id = dbUser.id.toString();
-            session.user.firstName = dbUser.firstname;
-            session.user.lastName = dbUser.lastname;
-            session.user.isProfileComplete = dbUser.isProfileComplete;
-            session.user.dbUser = dbUser;
-          }
-        } catch (error) {
-          console.error("Error fetching user data:", error);
+        if (dbUser) {
+          token.userId = dbUser.id;
+          token.email = dbUser.email;
+          token.firstName = dbUser.firstname;
+          token.lastName = dbUser.lastname;
         }
       }
-      return session;
-    },
-    async jwt({ token, user, account }) {
-      if (user) {
-        token.id = user.id;
-      }
       return token;
+    },
+    async session({ session, token }) {
+      // Pass JWT token data to session for frontend access
+      if (token.userId) {
+        session.user.id = token.userId.toString();
+        session.user.email = token.email as string;
+        session.user.firstName = token.firstName as string;
+        session.user.lastName = token.lastName as string;
+        
+        // Create a proper JWT token for API calls
+        session.accessToken = createJWTToken(token.userId as number, token.email as string);
+      }
+      return session;
     },
   },
   session: {
@@ -120,283 +115,9 @@ export const authOptions: NextAuthOptions = {
 };
 
 /**
- * Enhanced authentication utilities that work with NextAuth and standalone tokens
+ * Creates a JWT token for API authentication
  */
-
-/**
- * Extracts and validates user ID from various token types including NextAuth JWT tokens
- * @param {string} token - The authentication token
- * @returns {Promise<string | null>} - User ID if valid, null if invalid
- */
-export async function getUserIdFromToken(token: string): Promise<string | null> {
-  try {
-    if (!token) {
-      console.warn('[getUserIdFromToken] No token provided');
-      return null;
-    }
-
-    // Remove 'Bearer ' prefix if present
-    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
-    
-    if (!cleanToken) {
-      console.warn('[getUserIdFromToken] Empty token after cleaning');
-      return null;
-    }
-
-    console.log('[getUserIdFromToken] Processing token type:', cleanToken.includes('.') ? 'JWT' : 'OAuth');
-
-    // Handle JWT tokens (contains dots for header.payload.signature)
-    if (cleanToken.includes('.') && cleanToken.split('.').length === 3) {
-      try {
-        // Try to decode without verification first (for debugging)
-        const decoded = jwt.decode(cleanToken) as any;
-        console.log('[getUserIdFromToken] Decoded JWT payload:', decoded);
-
-        // Handle NextAuth JWT tokens - get user ID from email
-        if (decoded?.email) {
-          console.log('[getUserIdFromToken] Using email from JWT:', decoded.email);
-          
-          // Look up the actual user ID in the database
-          const dbUser = await prisma.beeusers.findUnique({
-            where: { email: decoded.email },
-            select: { id: true }
-          });
-          
-          if (dbUser) {
-            console.log('[getUserIdFromToken] Found database user ID:', dbUser.id);
-            return dbUser.id.toString();
-          } else {
-            console.warn('[getUserIdFromToken] No database user found for email:', decoded.email);
-            return null;
-          }
-        }
-
-        // Handle custom JWT tokens with userId
-        if (decoded?.userId) {
-          console.log('[getUserIdFromToken] Using userId from JWT:', decoded.userId);
-          return decoded.userId.toString();
-        }
-
-        // If you have JWT_SECRET, verify the token
-        if (process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET) {
-          const secret = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET!;
-          const verified = jwt.verify(cleanToken, secret) as any;
-          console.log('[getUserIdFromToken] Verified JWT:', verified);
-          
-          // Handle verified token with email
-          if (verified.email) {
-            const dbUser = await prisma.beeusers.findUnique({
-              where: { email: verified.email },
-              select: { id: true }
-            });
-            
-            if (dbUser) {
-              return dbUser.id.toString();
-            }
-          }
-          
-          // Handle verified token with userId
-          if (verified.userId) {
-            return verified.userId.toString();
-          }
-          
-          // Handle other verified token formats
-          return verified.sub || verified.id;
-        } else {
-          // If no JWT_SECRET, use decoded payload (less secure, for development)
-          console.warn('[getUserIdFromToken] No JWT_SECRET found, using unverified token');
-          
-          if (decoded.email) {
-            const dbUser = await prisma.beeusers.findUnique({
-              where: { email: decoded.email },
-              select: { id: true }
-            });
-            
-            if (dbUser) {
-              return dbUser.id.toString();
-            }
-          }
-          
-          return decoded.userId || decoded.sub || decoded.id;
-        }
-      } catch (jwtError: any) {
-        console.error('[getUserIdFromToken] JWT verification failed:', jwtError.message);
-        
-        // Try to decode anyway for Google OAuth JWTs or NextAuth JWTs
-        try {
-          const decoded = jwt.decode(cleanToken) as any;
-          if (decoded && typeof decoded === 'object') {
-            console.log('[getUserIdFromToken] Using decoded JWT:', decoded);
-            
-            // Handle decoded token with email
-            if (decoded.email) {
-              const dbUser = await prisma.beeusers.findUnique({
-                where: { email: decoded.email },
-                select: { id: true }
-              });
-              
-              if (dbUser) {
-                return dbUser.id.toString();
-              }
-            }
-            
-            return decoded.userId || decoded.sub || decoded.id;
-          }
-        } catch (decodeError: any) {
-          console.error('[getUserIdFromToken] JWT decode failed:', decodeError.message);
-        }
-      }
-    }
-
-    // Handle Google OAuth access tokens (long alphanumeric strings)
-    if (cleanToken.length > 100 && !cleanToken.includes('.')) {
-      console.log('[getUserIdFromToken] Detected Google OAuth access token');
-      
-      // Create a consistent user ID from the token hash
-      const crypto = require('crypto');
-      const hash = crypto.createHash('sha256').update(cleanToken).digest('hex');
-      const userId = 'google_' + hash.substring(0, 16);
-      
-      console.log('[getUserIdFromToken] Generated user ID for OAuth token:', userId);
-      return userId;
-    }
-
-    // Handle other token formats or session tokens
-    if (cleanToken.length > 10) {
-      console.log('[getUserIdFromToken] Treating as session token');
-      
-      // Create a consistent user ID from session token
-      const crypto = require('crypto');
-      const hash = crypto.createHash('sha256').update(cleanToken).digest('hex');
-      const userId = 'session_' + hash.substring(0, 16);
-      
-      console.log('[getUserIdFromToken] Generated user ID for session token:', userId);
-      return userId;
-    }
-
-    console.warn('[getUserIdFromToken] Unrecognized token format');
-    return null;
-
-  } catch (error) {
-    console.error('[getUserIdFromToken] Unexpected error:', error);
-    return null;
-  }
-}
-
-/**
- * Get user ID from NextAuth session or fallback to token-based auth
- * @param request - Next.js Request object or authorization header
- * @returns Promise<string | null> - User ID if authenticated, null otherwise
- */
-export async function getUserIdFromAuth(request?: Request | string): Promise<string | null> {
-  try {
-    // First, try to get user from NextAuth session
-    const session = await getServerSession(authOptions);
-    if (session?.user?.email) {
-      console.log('[getUserIdFromAuth] Found NextAuth session for email:', session.user.email);
-      
-      // Get the actual database user ID from the email
-      const dbUser = await prisma.beeusers.findUnique({
-        where: { email: session.user.email },
-        select: { id: true }
-      });
-      
-      if (dbUser) {
-        console.log('[getUserIdFromAuth] Found database user ID:', dbUser.id);
-        return dbUser.id.toString();
-      } else {
-        console.warn('[getUserIdFromAuth] No database user found for email:', session.user.email);
-        return null;
-      }
-    }
-
-    // Fallback to token-based authentication
-    let authHeader: string | null = null;
-    
-    if (typeof request === 'string') {
-      authHeader = request;
-    } else if (request && 'headers' in request) {
-      authHeader = request.headers.get('authorization');
-    }
-
-    if (authHeader) {
-      const userId = await getUserIdFromToken(authHeader);
-      if (userId?.startsWith('nextauth_')) {
-        // Convert NextAuth email-based ID to actual user ID
-        const email = userId.replace('nextauth_', '');
-        const dbUser = await prisma.beeusers.findUnique({
-          where: { email },
-          select: { id: true }
-        });
-        return dbUser?.id.toString() || null;
-      }
-      return userId;
-    }
-
-    return null;
-  } catch (error) {
-    console.error('[getUserIdFromAuth] Error:', error);
-    return null;
-  }
-}
-
-/**
- * Verifies Google OAuth token with Google's API
- * @param {string} token - Google OAuth access token
- * @returns {Promise<object|null>} - User info if valid, null if invalid
- */
-export async function verifyGoogleToken(token: string): Promise<any | null> {
-  try {
-    const response = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`);
-    
-    if (!response.ok) {
-      console.error('[verifyGoogleToken] Google API error:', response.status);
-      return null;
-    }
-    
-    const tokenInfo = await response.json();
-    console.log('[verifyGoogleToken] Google token info:', tokenInfo);
-    
-    return tokenInfo;
-  } catch (error) {
-    console.error('[verifyGoogleToken] Error verifying Google token:', error);
-    return null;
-  }
-}
-
-/**
- * Enhanced getUserIdFromToken that verifies Google tokens with Google API
- * @param {string} token - The authentication token
- * @returns {Promise<string | null>} - User ID if valid, null if invalid
- */
-export async function getUserIdFromTokenAsync(token: string): Promise<string | null> {
-  try {
-    const syncResult = await getUserIdFromToken(token);
-    
-    // If it's a Google OAuth token, verify with Google
-    if (syncResult && syncResult.startsWith('google_')) {
-      const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
-      const googleInfo = await verifyGoogleToken(cleanToken);
-      
-      if (googleInfo && googleInfo.user_id) {
-        return 'google_' + googleInfo.user_id;
-      }
-    }
-    
-    return syncResult;
-  } catch (error) {
-    console.error('[getUserIdFromTokenAsync] Error:', error);
-    return null;
-  }
-}
-
-/**
- * Creates a JWT token for a user
- * @param {string} userId - User ID
- * @param {object} additionalPayload - Additional data to include in token
- * @returns {string} - JWT token
- */
-export function createUserToken(userId: string, additionalPayload: Record<string, any> = {}): string {
+export function createJWTToken(userId: number, email: string): string {
   const secret = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
   if (!secret) {
     throw new Error('JWT_SECRET or NEXTAUTH_SECRET environment variable is required');
@@ -404,7 +125,7 @@ export function createUserToken(userId: string, additionalPayload: Record<string
 
   const payload = {
     userId,
-    ...additionalPayload,
+    email,
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
   };
@@ -413,89 +134,117 @@ export function createUserToken(userId: string, additionalPayload: Record<string
 }
 
 /**
- * Middleware to authenticate requests - works with both NextAuth and token-based auth
- * @param {string | Request} authHeaderOrRequest - Authorization header value or Request object
- * @returns {Promise<string | null>} - User ID if authenticated, null otherwise
+ * Verifies and extracts user ID from JWT token
  */
-export async function authenticateRequest(authHeaderOrRequest?: string | Request): Promise<string | null> {
+export async function getUserIdFromToken(token: string): Promise<string | null> {
   try {
-    // Try NextAuth session first
-    const session = await getServerSession(authOptions);
-    if (session?.user?.email) {
-      console.log('[authenticateRequest] Authenticated via NextAuth session for:', session.user.email);
+    if (!token) {
+      console.log('[getUserIdFromToken] No token provided');
+      return null;
+    }
+
+    // Remove 'Bearer ' prefix if present
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    
+    if (!cleanToken) {
+      console.log('[getUserIdFromToken] Empty token after cleaning');
+      return null;
+    }
+
+    const secret = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
+    if (!secret) {
+      console.error('[getUserIdFromToken] No JWT secret found');
+      return null;
+    }
+
+    console.log('[getUserIdFromToken] Processing JWT token');
+
+    // Verify and decode JWT
+    const decoded = jwt.verify(cleanToken, secret) as any;
+    console.log('[getUserIdFromToken] Decoded JWT payload:', {
+      userId: decoded.userId,
+      email: decoded.email,
+      iat: decoded.iat,
+      exp: decoded.exp
+    });
+
+    if (decoded.userId) {
+      console.log('[getUserIdFromToken] Using userId from JWT:', decoded.userId);
+      return decoded.userId.toString();
+    }
+
+    if (decoded.email) {
+      console.log('[getUserIdFromToken] Using email from JWT:', decoded.email);
       
-      // Get the actual database user ID from the email
+      // Fallback: lookup user by email
       const dbUser = await prisma.beeusers.findUnique({
-        where: { email: session.user.email },
+        where: { email: decoded.email },
         select: { id: true }
       });
       
       if (dbUser) {
-        console.log('[authenticateRequest] Found database user ID:', dbUser.id);
+        console.log('[getUserIdFromToken] Found database user ID:', dbUser.id);
         return dbUser.id.toString();
-      } else {
-        console.warn('[authenticateRequest] No database user found for email:', session.user.email);
-        return null;
       }
     }
 
-    // Fallback to token-based authentication
-    let authHeader: string | null = null;
+    console.warn('[getUserIdFromToken] No valid user identifier in JWT');
+    return null;
 
-    if (typeof authHeaderOrRequest === 'string') {
-      authHeader = authHeaderOrRequest;
-    } else if (authHeaderOrRequest && 'headers' in authHeaderOrRequest) {
-      authHeader = authHeaderOrRequest.headers.get('authorization');
+  } catch (error: any) {
+    if (error.name === 'TokenExpiredError') {
+      console.log('[getUserIdFromToken] JWT token expired');
+    } else if (error.name === 'JsonWebTokenError') {
+      console.log('[getUserIdFromToken] Invalid JWT token');
+    } else {
+      console.error('[getUserIdFromToken] JWT verification error:', error.message);
     }
-
-    if (!authHeader) {
-      console.warn('[authenticateRequest] No authorization header or session');
-      return null;
-    }
-
-    const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
-    const userId = await getUserIdFromToken(token);
-
-    // Convert NextAuth email-based ID to actual user ID
-    if (userId?.startsWith('nextauth_')) {
-      const email = userId.replace('nextauth_', '');
-      const dbUser = await prisma.beeusers.findUnique({
-        where: { email },
-        select: { id: true }
-      });
-      return dbUser?.id.toString() || null;
-    }
-
-    return userId;
-  } catch (error) {
-    console.error('[authenticateRequest] Error:', error);
     return null;
   }
 }
 
 /**
- * Get the current user's database record
- * @param authHeaderOrRequest - Authorization header or Request object
- * @returns Promise<beeusers | null> - User record if authenticated, null otherwise
+ * Simplified authentication for API routes - JWT ONLY
  */
-export async function getCurrentUser(authHeaderOrRequest?: string | Request) {
+export async function authenticateRequest(request: NextRequest): Promise<string | null> {
   try {
-    const userId = await authenticateRequest(authHeaderOrRequest);
-    if (!userId) return null;
-
-    // First try to get from NextAuth session
-    const session = await getServerSession(authOptions);
-    if (session?.user?.dbUser) {
-      return session.user.dbUser;
-    }
-
-    // Fallback to database lookup
-    if (userId.startsWith('google_') || userId.startsWith('session_')) {
-      // For hashed IDs, we can't easily look up the user
-      // You might need to store these mappings in your database
-      console.warn('[getCurrentUser] Cannot lookup user for hashed ID:', userId);
+    // Only check Authorization header for JWT token
+    const authHeader = request.headers.get('authorization');
+    
+    if (!authHeader) {
+      console.log('[authenticateRequest] No authorization header');
       return null;
     }
+
+    if (!authHeader.startsWith('Bearer ')) {
+      console.log('[authenticateRequest] Invalid authorization header format');
+      return null;
+    }
+
+    const token = authHeader.substring(7);
+    const userId = await getUserIdFromToken(token);
+
+    if (userId) {
+      console.log('[authenticateRequest] Authenticated user ID:', userId);
+      return userId;
+    } else {
+      console.log('[authenticateRequest] Token validation failed');
+      return null;
+    }
+
+  } catch (error) {
+    console.error('[authenticateRequest] Authentication error:', error);
+    return null;
+  }
+}
+
+/**
+ * Get current user from JWT token
+ */
+export async function getCurrentUser(request: NextRequest) {
+  try {
+    const userId = await authenticateRequest(request);
+    if (!userId) return null;
 
     const dbUser = await prisma.beeusers.findUnique({
       where: { id: parseInt(userId) },

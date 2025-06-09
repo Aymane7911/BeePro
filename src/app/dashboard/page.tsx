@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2, Globe, FileText, AlertCircle } from 'lucide-react';
+import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2, Globe, FileText, AlertCircle, Sparkles, LogOut, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 // Define your interfaces here, right after imports
@@ -185,6 +185,7 @@ export default function JarManagementDashboard() {
   honeyCollected: 0,
   location: null
 });
+const [isOpen, setIsOpen] = useState(false);
   
 // Function to create authenticated API headers
   const getAuthHeaders = (): Record<string, string> => {
@@ -224,30 +225,10 @@ export default function JarManagementDashboard() {
   const [batchNumber, setBatchNumber] = useState('');
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [batchName, setBatchName] = useState(''); // Added batch name field
-  const addApiary = () => {
-    setBatchFormData({
-      ...batchFormData,
-      apiaries: [
-        ...batchFormData.apiaries,
-        {
-          locationId:'',
-          name: '',
-          number: '',
-          hiveCount: 0,
-          kilosCollected: 0
-        }
-      ]
-    });
-  };
+  
+  
 
-  const removeApiary = (index: number) => {
-    const updatedApiaries = [...batchFormData.apiaries];
-    updatedApiaries.splice(index, 1);
-    setBatchFormData({
-      ...batchFormData,
-      apiaries: updatedApiaries
-    });
-  };
+ 
 
   function getAuthToken() {
   // Replace this with however you store your JWT token
@@ -276,68 +257,127 @@ async function makeAuthenticatedRequest(url, options = {}) {
 }
 
   async function saveApiaryToDatabase(apiaryData: any) {
-  console.log('=== SAVING APIARY - AUTH DEBUG ===');
+  console.log('=== SAVING APIARY - SINGLE SAVE ===');
+  console.log('Raw apiaryData received:', apiaryData);
   
-  // Get token from wherever it's stored (check all possible locations)
-  let token = null;
-  
-  // Check localStorage
-  if (typeof window !== 'undefined') {
-    token = localStorage.getItem('auth-token') || localStorage.getItem('token');
-    console.log('Token from localStorage:', token ? 'EXISTS' : 'NULL');
-  }
-  
-  // Check sessionStorage
-  if (!token && typeof window !== 'undefined') {
-    token = sessionStorage.getItem('auth-token') || sessionStorage.getItem('token');
-    console.log('Token from sessionStorage:', token ? 'EXISTS' : 'NULL');
-  }
-  
-  // Check cookies for auth-token
-  if (!token && typeof document !== 'undefined') {
-    const cookieMatch = document.cookie.match(/auth-token=([^;]+)/);
-    token = cookieMatch ? cookieMatch[1] : null;
-    console.log('Token from auth-token cookie:', token ? 'EXISTS' : 'NULL');
-  }
-  
-  // Check for NextAuth session token in cookies
-  if (!token && typeof document !== 'undefined') {
-    const nextAuthMatch = document.cookie.match(/next-auth\.session-token=([^;]+)/);
-    token = nextAuthMatch ? nextAuthMatch[1] : null;
-    console.log('NextAuth session token:', token ? 'EXISTS' : 'NULL');
-  }
-  
-  console.log('All cookies:', document.cookie);
-  
-  // Prepare headers
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-  
-  // Add Authorization header if we have a JWT token
-  if (token && token.includes('.')) { // JWT has dots
-    headers['Authorization'] = `Bearer ${token}`;
-    console.log('Added Authorization header with JWT');
-  }
-  
-  const response = await fetch('/api/apiaries', {
-    method: 'POST',
-    headers,
-    credentials: 'include', // This is crucial for session-based auth
-    body: JSON.stringify(apiaryData)
-  });
+  try {
+    // INPUT VALIDATION
+    if (!apiaryData.name || !apiaryData.number) {
+      throw new Error('Apiary name and number are required');
+    }
 
-  console.log('POST Response status:', response.status);
-  console.log('POST Response headers:', Object.fromEntries(response.headers.entries()));
-  
-  if (!response.ok) {
-    const errorData = await response.json();
-    console.error('POST API Error:', errorData);
-    throw new Error(errorData.message || errorData.error || 'Failed to save apiary');
-  }
+    // Enhanced location validation
+    if (!apiaryData.location) {
+      throw new Error('Location is required');
+    }
 
-  return await response.json();
+    // Extract and validate coordinates
+    let latitude, longitude;
+    
+    if (typeof apiaryData.location === 'object') {
+      latitude = apiaryData.location.latitude;
+      longitude = apiaryData.location.longitude;
+    } else {
+      throw new Error('Location must be an object with latitude and longitude');
+    }
+
+    // Convert to numbers and validate
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      console.error('Invalid coordinates:', { latitude, longitude, lat, lng });
+      throw new Error('Invalid latitude or longitude values');
+    }
+
+    if (lat < -90 || lat > 90) {
+      throw new Error('Latitude must be between -90 and 90');
+    }
+
+    if (lng < -180 || lng > 180) {
+      throw new Error('Longitude must be between -180 and 180');
+    }
+
+    // PREPARE DATA - Send structure that matches your API interface
+    const dataForAPI = {
+      name: String(apiaryData.name).trim(),
+      number: String(apiaryData.number).trim(),
+      hiveCount: Math.max(0, parseInt(apiaryData.hiveCount) || 0),
+      honeyCollected: Math.max(0, parseFloat(apiaryData.honeyCollected) || 0),
+      location: {
+        latitude: lat,
+        longitude: lng
+      }
+    };
+
+    console.log('Data being sent to API:', dataForAPI);
+
+    // Get auth token
+    let token = null;
+    if (typeof window !== 'undefined') {
+      token = localStorage.getItem('auth-token') ||
+               localStorage.getItem('token') ||
+               sessionStorage.getItem('auth-token');
+    }
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    console.log('Making SINGLE POST request to /api/apiaries');
+
+    // SINGLE API CALL - This will create ONE apiary with a batchId
+    const response = await fetch('/api/apiaries', {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify(dataForAPI)
+    });
+
+    console.log('Response status:', response.status);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('API Error Response:', errorData);
+      
+      let errorMessage = 'Failed to save apiary';
+
+      switch (response.status) {
+        case 401:
+          errorMessage = 'Authentication failed. Please log in again.';
+          break;
+        case 409:
+          errorMessage = errorData.message || errorData.error || 'An apiary with this name or number already exists.';
+          break;
+        case 400:
+          errorMessage = errorData.message || errorData.error || 'Invalid data provided.';
+          break;
+        case 500:
+          errorMessage = 'Server error. Please try again later.';
+          break;
+        default:
+          errorMessage = errorData.message || errorData.error || errorMessage;
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log('Apiary saved successfully:', result);
+
+    // Return the created apiary
+    return result;
+
+  } catch (error) {
+    console.error('Error in saveApiaryToDatabase:', error);
+    throw error;
+  }
 }
+
 
 const refreshApiariesFromDatabase = async () => {
   try {
@@ -485,7 +525,7 @@ useEffect(() => {
     if (!token) {
       throw new Error("No token found. Please log in again.");
     }
-
+   
     // Create clean data to avoid circular references
     const newApiaryData = {
       name: String(apiaryFormData.name).trim(),
@@ -690,10 +730,34 @@ const cleanLocationData = (location: any) => {
 // 3. Function to fetch saved apiary locations
 const fetchSavedApiaryLocations = async () => {
   try {
-    const response = await fetch('/api/apiaries/locations');
+    // Get auth token
+    let token = null;
+    if (typeof window !== 'undefined') {
+      token = localStorage.getItem('auth-token') ||
+               localStorage.getItem('token') ||
+               sessionStorage.getItem('auth-token');
+    }
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    console.log('Fetching saved locations with auth...');
+    const response = await fetch('/api/apiaries/locations', {
+      headers,
+      credentials: 'include',
+    });
+
     if (response.ok) {
       const locations = await response.json();
+      console.log('Fetched saved locations:', locations);
       setSavedApiaryLocations(locations);
+    } else {
+      console.error('Failed to fetch saved locations:', response.status);
     }
   } catch (error) {
     console.error('Error fetching apiary locations:', error);
@@ -933,24 +997,7 @@ const refreshData = () => {
   }, 1000);
 };
 
-const handleBatchFormChange = (e) => {
-  const { name, value } = e.target;
-  if (name.startsWith('weight_')) {
-    const certType = name.replace('weight_', '');
-    setBatchFormData({
-      ...batchFormData,
-      weights: {
-        ...batchFormData.weights,
-        [certType]: parseInt(value, 10) || 0
-      }
-    });
-  } else {
-    setBatchFormData({
-      ...batchFormData,
-      [name]: value
-    });
-  }
-};
+
 
 const handleBuyTokens = () => {
   // In a real app, this would connect to a payment processor
@@ -1753,45 +1800,7 @@ const handleSelectExistingLocation = (location: ApiaryLocation) => {
 };
 
 
-// Alternative approach using the utility functions:
-const handleLocationConfirmWithUtils = async (name: string | null = null) => {
-  if (!selectedLocation) return;
 
-  try {
-    setIsSaving(true);
-    
-    const response = await makeAuthenticatedRequest('/api/apiaries/locations', {
-      method: 'POST',
-      body: JSON.stringify({
-        latitude: selectedLocation.lat,
-        longitude: selectedLocation.lng,
-        name: name || `Location ${new Date().toLocaleDateString()}`,
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        // Redirect to login
-        window.location.href = '/login';
-        return;
-      }
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Failed to save location');
-    }
-
-    const newLocation = await response.json();
-    setLocations(prev => [newLocation, ...prev]);
-    setShowLocationConfirm(false);
-    setSelectedLocation(null);
-    alert('Location saved successfully!');
-    
-  } catch (error) {
-    console.error('Error saving location:', error);
-    alert('Failed to save location. Please try again.');
-  } finally {
-    setIsSaving(false);
-  }
-};
 
 
 // Remove the unused saveApiaryLocation function
@@ -1802,137 +1811,205 @@ const handleLocationCancel = () => {
 
   return (
     <div className="flex flex-col space-y-6 p-6 min-h-screen bg-gradient-to-b from-yellow-200 to-white text-black">
-      {/* Sidebar */}
-<div className={`fixed top-0 left-0 h-full bg-gray-800 text-white transition-all duration-300 ease-in-out z-20 ${sidebarOpen ? 'w-64' : 'w-0'} overflow-hidden`}>
-  <div className="p-4 flex justify-between items-center">
-    <h2 className="text-xl font-bold">Menu</h2>
-    <button onClick={toggleSidebar} className="p-1 hover:bg-gray-700 rounded">
-      <X className="h-6 w-6" />
-    </button>
-  </div>
-  <nav className="mt-8">
-    <ul className="space-y-2">
-      <li>
-        <a href="/dashboard" className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <Home className="h-5 w-5 mr-3" />
-          Dashboard
-        </a>
-      </li>
-      <li>
-        <a href="/batches"
-         onClick={(e) => {
-    e.preventDefault();
-    // For a React app with routing, you could use:
-    router.push('/batches');
-  }}
-         className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <Layers className="h-5 w-5 mr-3" />
-          Batches
-        </a>
-      </li>
-      <li>
-        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <Activity className="h-5 w-5 mr-3" />
-          Analytics
-        </a>
-      </li>
-      <li>
-        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <Wallet className="h-5 w-5 mr-3" />
-          Token Wallet
-        </a>
-      </li>
-      <li>
-        <a href="/profile" className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <Users className="h-5 w-5 mr-3" />
-          Profile
-        </a>
-      </li>
-      <li>
-        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <Settings className="h-5 w-5 mr-3" />
-          Settings
-        </a>
-      </li>
-      <li>
-        <a href="#" className="flex items-center px-4 py-3 hover:bg-gray-700">
-          <HelpCircle className="h-5 w-5 mr-3" />
-          Help
-        </a>
-      </li>
-    </ul>
-  </nav>
-</div>
+      {/* Enhanced Sidebar */}
+      <div className={`fixed top-0 left-0 h-full bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-white transition-all duration-500 ease-in-out z-20 ${sidebarOpen ? 'w-72' : 'w-0'} overflow-hidden shadow-2xl`}>
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-900/20 to-purple-900/20"></div>
+        <div className="relative z-10">
+          <div className="p-6 flex justify-between items-center border-b border-gray-700/50">
+            <h2 className="text-2xl font-bold bg-gradient-to-r from-yellow-400 to-amber-300 bg-clip-text text-transparent">Navigation</h2>
+            <button onClick={toggleSidebar} className="p-2 hover:bg-gray-700/50 rounded-xl transition-all duration-300">
+              <X className="h-6 w-6" />
+            </button>
+          </div>
+          <nav className="mt-8 px-4">
+            <ul className="space-y-3">
+              {[
+                { icon: Home, label: 'Dashboard', href: '/dashboard' },
+                { icon: Layers, label: 'Batches', href: '/batches' },
+                { icon: Activity, label: 'Analytics', href: '#' },
+                { icon: Wallet, label: 'Token Wallet', href: '#' },
+                { icon: Users, label: 'Profile', href: '/profile' },
+                { icon: Settings, label: 'Settings', href: '#' },
+                { icon: HelpCircle, label: 'Help', href: '#' }
+              ].map((item, index) => (
+                <li key={index}>
+                  <a href={item.href} className="group flex items-center px-4 py-4 rounded-xl hover:bg-gradient-to-r hover:from-yellow-500/20 hover:to-amber-500/20 transition-all duration-300 transform hover:translate-x-2">
+                    <item.icon className="h-6 w-6 mr-4 transition-all duration-300 group-hover:text-yellow-400 group-hover:scale-110" />
+                    <span className="font-medium group-hover:text-yellow-300 transition-colors duration-300">{item.label}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </div>
+      </div>
 
-{/* Backdrop overlay when sidebar is open - now with blur effect */}
-{sidebarOpen && (
-  <div 
-    className="fixed inset-0 backdrop-blur-sm bg-black/20 z-10"
-    onClick={toggleSidebar}
-  ></div>
-)}
-      <header className="bg-white p-4 rounded-lg shadow text-black">
-        <div className="flex justify-between items-center">
+{/* Enhanced Backdrop */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 backdrop-blur-md bg-black/30 z-10 transition-all duration-500"
+          onClick={toggleSidebar}
+        ></div>
+      )}
+
+       {/* Enhanced Header Section */}
+      <header className="relative bg-white/80 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-white/20 text-black overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/5 via-transparent to-amber-500/5"></div>
+        <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-yellow-400/10 to-transparent rounded-full blur-2xl"></div>
+        
+        <div className="relative z-10 flex justify-between items-center">
           <div className="flex items-center">
             <button 
               onClick={toggleSidebar}
-              className="mr-4 p-1 rounded hover:bg-gray-100 md:mr-6"
+              className="mr-6 p-3 rounded-xl hover:bg-yellow-100/50 transition-all duration-300 hover:scale-110 hover:rotate-12"
             >
-              <Menu className="h-6 w-6" />
+              <Menu className="h-7 w-7" />
             </button>
             <div className="flex items-center">
-              <div className="mr-3 bg-yellow-500 p-2 rounded">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <div className="mr-4 bg-gradient-to-br from-yellow-500 to-amber-500 p-3 rounded-2xl shadow-lg transform hover:scale-110 transition-all duration-300">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM6 14C5.45 14 5 13.55 5 13C5 12.45 5.45 12 6 12C6.55 12 7 12.45 7 13C7 13.55 6.55 14 6 14ZM9 9C8.45 9 8 8.55 8 8C8 7.45 8.45 7 9 7C9.55 7 10 7.45 10 8C10 8.55 9.55 9 9 9ZM15 9C14.45 9 14 8.55 14 8C14 7.45 14.45 7 15 7C15.55 7 16 7.45 16 8C16 8.55 15.55 9 15 9ZM18 14C17.45 14 17 13.55 17 13C17 12.45 17.45 12 18 12C18.55 12 19 12.45 19 13C19 13.55 18.55 14 18 14Z" fill="white"/>
                 </svg>
               </div>
-              <h1 className="text-2xl font-bold text-gray-800">HoneyCertify</h1>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">HoneyCertify</h1>
             </div>
           </div>
-         <div className="flex items-center">
-  <div className="mr-4 bg-gray-100 p-3 rounded-lg flex items-center">
-    <Wallet className="h-5 w-5 text-yellow-600 mr-2" />
-    <div>
-      <p className="text-sm text-gray-500">Token Balance</p>
-      <p className="text-lg font-bold">{tokenBalance}</p>
-    </div>
-    <button
-      onClick={() => router.push('/buy-token')}
-      className="ml-3 p-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 flex items-center"
-    >
-      <PlusCircle className="h-4 w-4 mr-1" />
-      Buy
-    </button>
-  </div>
+
+          <div className="flex items-center space-x-4">
+            {/* Token Balance Section (Preserved) */}
+            <div className="group relative mr-4 bg-gradient-to-r from-gray-900/80 to-gray-800/80 backdrop-blur-xl 
+                          p-6 rounded-2xl border border-gray-700/30 shadow-2xl
+                          transform transition-all duration-500 hover:scale-105 hover:shadow-purple-500/20
+                          flex items-center overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/10 via-transparent to-purple-500/10 
+                             opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="absolute top-2 right-4 w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
+              <div className="absolute bottom-3 right-8 w-1 h-1 bg-purple-400 rounded-full animate-ping"></div>
+              
+              <div className="relative z-10">
+                <Wallet className="h-8 w-8 text-yellow-400 mr-4 transition-all duration-300 
+                                 group-hover:text-yellow-300 group-hover:scale-110 group-hover:rotate-12 
+                                 drop-shadow-lg" />
+              </div>
+              
+              <div className="flex-1 relative z-10">
+                <p className="text-sm text-gray-400 mb-1 transition-all duration-300 group-hover:text-gray-300">
+                  Token Balance
+                </p>
+                <p className="text-2xl font-bold bg-gradient-to-r from-yellow-400 to-yellow-200 
+                             bg-clip-text text-transparent transition-all duration-300 
+                             group-hover:from-yellow-300 group-hover:to-white">
+                  {tokenBalance}
+                </p>
+              </div>
+              
+              <button
+                onClick={() => router.push('/buy-token')}
+                className="group/btn relative ml-6 px-6 py-3 bg-gradient-to-r from-yellow-500 to-amber-500 
+                           text-white rounded-xl font-semibold overflow-hidden
+                           transform transition-all duration-300 
+                           hover:from-yellow-400 hover:to-amber-400 
+                           hover:scale-110 hover:shadow-2xl hover:shadow-yellow-500/30
+                           active:scale-95 flex items-center"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent 
+                               transform -skew-x-12 -translate-x-full 
+                               group-hover/btn:translate-x-full transition-transform duration-700"></div>
+                
+                <PlusCircle className="h-5 w-5 mr-2 relative z-10 transition-transform duration-300 
+                                     group-hover/btn:rotate-180" />
+                <span className="relative z-10">Buy</span>
+              </button>
+            </div>
+
+            {/* Create Batch Button (Preserved) */}
             <button
               onClick={() => setShowBatchModal(true)}
-              className="flex items-center px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 mr-3"
+              className="group relative overflow-hidden px-6 py-3 
+                         bg-gradient-to-r from-emerald-600 to-green-500 
+                         text-white rounded-xl font-semibold shadow-2xl
+                         transform transition-all duration-500 
+                         hover:from-emerald-500 hover:to-green-400 
+                         hover:scale-105 hover:shadow-green-500/30 hover:-translate-y-2
+                         active:scale-95 active:translate-y-0
+                         flex items-center border border-green-400/20"
             >
-              <Package className="w-4 h-4 mr-2" />
-              Create Batch
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 
+                             transform -skew-x-12 -translate-x-full 
+                             group-hover:translate-x-full transition-transform duration-1000"></div>
+              
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-emerald-400 to-green-400 
+                             opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm"></div>
+              
+              <Package className="w-5 h-5 mr-3 relative z-10 transition-all duration-300 
+                                group-hover:rotate-12 group-hover:scale-110" />
+              <span className="relative z-10 transition-all duration-300 group-hover:tracking-wider">
+                Create Batch
+              </span>
+              <Sparkles className="w-4 h-4 ml-2 relative z-10 opacity-0 transition-all duration-300 
+                                group-hover:opacity-100 group-hover:rotate-180" />
             </button>
+
+            {/* Premium Button (Preserved) */}
             <button
               onClick={() => router.push('/premium')}
-              className="flex items-center px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-700 mr-3"
+              className="group relative overflow-hidden px-6 py-3 
+                         bg-gradient-to-r from-amber-500 to-yellow-500 
+                         text-white rounded-xl font-semibold shadow-2xl
+                         transform transition-all duration-500 
+                         hover:from-amber-400 hover:to-yellow-400 
+                         hover:scale-105 hover:shadow-yellow-500/30 hover:-translate-y-2
+                         active:scale-95 active:translate-y-0
+                         flex items-center border border-yellow-400/20"
             >
-              <Package className="w-4 h-4 mr-2" />
-              Premium
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent 
+                             transform -skew-x-12 -translate-x-full 
+                             group-hover:translate-x-full transition-transform duration-800"></div>
+              
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-amber-300 to-yellow-300 
+                             opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm"></div>
+              
+              <Package className="w-5 h-5 mr-3 relative z-10 transition-all duration-300 
+                                group-hover:rotate-12 group-hover:scale-110" />
+              <span className="relative z-10 transition-all duration-300 group-hover:tracking-wider">
+                Premium
+              </span>
+              <div className="w-2 h-2 ml-2 relative z-10 bg-yellow-200 rounded-full 
+                             opacity-0 group-hover:opacity-100 animate-pulse"></div>
             </button>
+
+            {/* Logout Button (Preserved) */}
             <button
-               onClick={() => {
-               // Clear user session/token here
-               localStorage.removeItem('token');  // or your auth token key
-               // Redirect to login or homepage
-               router.push('/login');
-  }}
-  className="flex items-center px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 mr-3"
->
-  <Package className="w-4 h-4 mr-2" />
-  Logout
-</button>
+              onClick={() => {
+                console.log('Logging out...');
+                router.push('/login');
+              }}
+              className="group relative overflow-hidden px-6 py-3 
+                         bg-gradient-to-r from-red-600 to-rose-500 
+                         text-white rounded-xl font-semibold shadow-2xl
+                         transform transition-all duration-500 
+                         hover:from-red-500 hover:to-rose-400 
+                         hover:scale-105 hover:shadow-red-500/30 hover:-translate-y-2
+                         active:scale-95 active:translate-y-0
+                         flex items-center border border-red-400/20"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent 
+                             transform -skew-x-12 -translate-x-full 
+                             group-hover:translate-x-full transition-transform duration-600"></div>
+              
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-red-400 to-rose-400 
+                             opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm"></div>
+              
+              <LogOut className="w-5 h-5 mr-3 relative z-10 transition-all duration-300 
+                               group-hover:-rotate-12 group-hover:scale-110" />
+              <span className="relative z-10 transition-all duration-300 group-hover:tracking-wider">
+                Logout
+              </span>
+            </button>
           </div>
         </div>
-        <p className="text-gray-500 text-sm mt-1">
+        
+        <p className="text-gray-600 text-sm mt-4 relative z-10 opacity-75">
           Last updated: {lastUpdated}
         </p>
       </header>
@@ -2198,35 +2275,7 @@ const handleLocationCancel = () => {
                   </button>
                 </div>
                 
-                {/* Batch-specific honey collection - Mandatory */}
-                <div className="border-t pt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Honey Collected for THIS Batch (kg) <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={apiary.kilosCollected || ''}
-                      onChange={(e) => {
-                        const newValue = parseFloat(e.target.value) || 0;
-                        setSelectedApiaries(prev => {
-                          const prevArray = Array.isArray(prev) ? prev : [];
-                          return prevArray.map(a => 
-                            a.id === apiary.id ? { ...a, batchHoneyCollected: newValue } : a
-                          );
-                        });
-                      }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                      placeholder="0.0"
-                      required
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      This is the amount of honey collected from this apiary specifically for this batch
-                    </p>
-                  </div>
-                </div>
+                
               </div>
             ))}
           </div>
@@ -2264,32 +2313,9 @@ const handleLocationCancel = () => {
         </div>
       )}
       
-      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs">
-        <p><strong>🔍 Apiary Data Debug:</strong></p>
-        {Array.isArray(availableApiaries) && availableApiaries.map(apiary => (
-          <div key={apiary.id} className="mt-2 p-2 bg-white rounded border">
-            <p><strong>{apiary.name}</strong> (ID: {apiary.id})</p>
-            <p>• Number: {apiary.number}</p>
-            <p>• Hive Count: {apiary.hiveCount}</p>
-            <p>• Kilos Collected: {apiary.kilosCollected} (type: {typeof apiary.kilosCollected})</p>
-            <p>• Location: lat: {apiary.latitude}, lng: {apiary.longitude}</p>
-            <p>• Full Object Keys: {Object.keys(apiary).join(', ')}</p>
-          </div>
-        ))}
-      </div>
+      
 
-      <div className="mb-4 p-2 bg-yellow-100 border border-yellow-300 rounded text-xs">
-        <p><strong>Debug Info:</strong></p>
-        <p>Batch Number: "{batchNumber}" (length: {batchNumber?.length || 0})</p>
-        <p>Selected Apiaries: {Array.isArray(selectedApiaries) ? selectedApiaries.length : 'Not an array'}</p>
-        <p>All apiaries have batch honey defined?: {Array.isArray(selectedApiaries) && selectedApiaries.every(a => a.batchHoneyCollected !== undefined && a.batchHoneyCollected !== null && a.batchHoneyCollected !== '') ? 'YES' : 'NO'}</p>
-        <p>Button should be enabled: {
-          batchNumber?.trim() && 
-          Array.isArray(selectedApiaries) && 
-          selectedApiaries.length > 0 && 
-          selectedApiaries.every(a => a.batchHoneyCollected !== undefined && a.batchHoneyCollected !== null && a.batchHoneyCollected !== '') ? 'YES' : 'NO'
-        }</p>
-      </div>
+      
 
       {/* Action Buttons */}
       <div className="flex justify-end space-x-3 pt-4 border-t">
@@ -2496,53 +2522,49 @@ const handleLocationCancel = () => {
 
               {/* Saved Locations Dropdown */}
               {savedApiaryLocations.length > 0 && (
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Quick Select from Saved Locations
-                  </label>
-                  <select
-  value="" // Keep this as empty to always show placeholder
-  onChange={(e) => {
-    const apiaryId = e.target.value;
-    if (apiaryId) {
-      // Ensure selectedApiaries is an array
-      const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
-      
-      // Check if apiary is not already selected
-      const isAlreadySelected = currentSelected.some(a => a.id === apiaryId);
-      
-      if (!isAlreadySelected) {
-        const apiary = availableApiaries.find(a => a.id === apiaryId);
-        if (apiary) {
-          setSelectedApiaries(prev => {
-            const prevArray = Array.isArray(prev) ? prev : [];
-            return [...prevArray, { ...apiary, kilosCollected: 0 }];
-          });
+  <div className="mb-4">
+    <label className="block text-sm font-medium text-gray-700 mb-2">
+      Quick Select from Saved Locations
+    </label>
+    <select
+      value=""
+      onChange={(e) => {
+        const locationId = e.target.value;
+        if (locationId) {
+          const selectedLocation = savedApiaryLocations.find(loc => loc.id === parseInt(locationId));
+          if (selectedLocation) {
+            console.log('Selected location from saved locations:', selectedLocation);
+            
+            // Create proper ApiaryLocation object
+            const apiaryLocation: ApiaryLocation = {
+              id: selectedLocation.id,
+              name: selectedLocation.name,
+              latitude: selectedLocation.latitude,
+              longitude: selectedLocation.longitude,
+              lat: selectedLocation.latitude,  // Required by LocationCoordinates
+              lng: selectedLocation.longitude, // Required by LocationCoordinates
+              createdAt: selectedLocation.createdAt
+            };
+            
+            setApiaryFormData(prev => ({
+              ...prev,
+              location: apiaryLocation
+            }));
+          }
+          (e.target as HTMLSelectElement).value = "";
         }
-      }
-      
-      // Reset the select value to empty after selection
-      e.target.value = "";
-    }
-  }}
-  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
->
-  <option value="">Select an apiary to add...</option>
-  {Array.isArray(availableApiaries) && 
-    availableApiaries
-      .filter(apiary => {
-        const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
-        return !currentSelected.some(selected => selected.id === apiary.id);
-      })
-      .map(apiary => (
-        <option key={apiary.id} value={apiary.id}>
-          {apiary.name} (ID: {apiary.number}) - {apiary.hiveCount} hives
+      }}
+      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+    >
+      <option value="">Select your location...</option>
+      {savedApiaryLocations.map(location => (
+        <option key={location.id} value={location.id}>
+          {location.name} - Lat: {location.latitude?.toFixed(4)}, Lng: {location.longitude?.toFixed(4)}
         </option>
-      ))
-  }
-</select>
-                </div>
-              )}
+      ))}
+    </select>
+  </div>
+)}
             </div>
           </div>
         </div>
@@ -3494,12 +3516,107 @@ const handleLocationCancel = () => {
               >
                 Purchase
               </button>
+              
             </div>
+            
+          </div>
+          
+        </div>
+        
+      )}
+      {/* Floating Action Menu - ADD THIS RIGHT AFTER CERTIFICATION ANALYTICS SECTION */}
+      <div className="fixed bottom-6 right-6 z-50">
+        {/* Background overlay when menu is open */}
+        {isOpen && (
+          <div 
+            className="fixed inset-0 bg-black/10 backdrop-blur-sm -z-10"
+            onClick={() => setIsOpen(false)}
+          />
+        )}
+        
+        {/* Menu Options */}
+        <div className={`absolute bottom-20 right-0 space-y-3 transform transition-all duration-300 ease-out ${
+          isOpen 
+            ? 'translate-y-0 opacity-100 scale-100' 
+            : 'translate-y-8 opacity-0 scale-95 pointer-events-none'
+        }`}>
+          
+          {/* Create Batch Option */}
+          <div className="flex items-center space-x-3">
+            <div className="bg-white text-gray-700 px-4 py-2 rounded-full shadow-lg border text-sm font-medium whitespace-nowrap">
+              Create New Batch
+            </div>
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                setTimeout(() => setShowBatchModal(true), 200);
+              }}
+              className="group relative bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white p-4 rounded-full shadow-xl hover:shadow-2xl transform hover:scale-110 transition-all duration-300 border-2 border-white/20"
+            >
+              <Package className="h-6 w-6" />
+              <div className="absolute inset-0 bg-white/20 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-300 animate-pulse" />
+            </button>
+          </div>
+
+          {/* Create Apiary Option */}
+          <div className="flex items-center space-x-3">
+            <div className="bg-white text-gray-700 px-4 py-2 rounded-full shadow-lg border text-sm font-medium whitespace-nowrap">
+              Create New Apiary
+            </div>
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                setTimeout(() => setShowApiaryModal(true), 200);
+              }}
+              className="group relative bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white p-4 rounded-full shadow-xl hover:shadow-2xl transform hover:scale-110 transition-all duration-300 border-2 border-white/20"
+            >
+              <MapPin className="h-6 w-6" />
+              <div className="absolute inset-0 bg-white/20 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-300 animate-pulse" />
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Main FAB Button */}
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={`group relative bg-gradient-to-r from-blue-600 to-purple-700 hover:from-blue-700 hover:to-purple-800 text-white p-5 rounded-full shadow-2xl hover:shadow-3xl transform transition-all duration-300 border-2 border-white/20 ${
+            isOpen ? 'rotate-45 scale-110' : 'hover:scale-110'
+          }`}
+        >
+          {/* Animated background gradient */}
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full opacity-0 group-hover:opacity-30 transition-opacity duration-300" />
+          
+          {/* Icon */}
+          <div className="relative z-10">
+            {isOpen ? (
+              <X className="h-7 w-7 transition-transform duration-300" />
+            ) : (
+              <Plus className="h-7 w-7 transition-transform duration-300" />
+            )}
+          </div>
+
+          {/* Ripple effect */}
+          <div className="absolute inset-0 rounded-full bg-white/20 scale-0 group-active:scale-100 transition-transform duration-200" />
+          
+          {/* Sparkle effects */}
+          <div className="absolute -top-2 -right-2 w-4 h-4 opacity-0 group-hover:opacity-100 transition-all duration-500 delay-100">
+            <Sparkles className="h-4 w-4 text-yellow-300 animate-pulse" />
+          </div>
+          <div className="absolute -bottom-2 -left-2 w-3 h-3 opacity-0 group-hover:opacity-100 transition-all duration-500 delay-200">
+            <div className="w-3 h-3 bg-yellow-300 rounded-full animate-ping" />
+          </div>
+        </button>
+
+        {/* Subtle pulsing ring when closed */}
+        {!isOpen && (
+          <div className="absolute inset-0 rounded-full border-2 border-blue-400/30 animate-ping pointer-events-none" />
+        )}
+      </div>
     </div>
-   );
+   
+  );
   };
 
 

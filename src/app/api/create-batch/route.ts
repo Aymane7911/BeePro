@@ -4,24 +4,26 @@ import { getUserIdFromToken } from '@/lib/auth';
 
 const prisma = new PrismaClient();
 
-// Type definitions
-interface ApiaryData {
+// UPDATED Type definitions to match the actual frontend structure
+interface ApiaryObject {
+  id: number;
   name: string;
   number: string;
-  hiveCount?: number | string;
-  kilosCollected?: number | string;
-  latitude?: number | string | null;
-  longitude?: number | string | null;
-  locationId?: string;
+  hiveCount: number;
+  kilosCollected: number;
+  locationId: number | null;
+  location: any;
 }
 
 interface BatchRequestBody {
   batchNumber: string;
   batchName?: string;
-  apiaries?: ApiaryData[];
+  apiaries?: ApiaryObject[]; // Changed to match what frontend sends
+  totalHives?: number;
+  totalHoney?: number;
 }
 
-// GET: Fetch batches for logged-in user
+// GET: Fetch batches for logged-in user (unchanged)
 export async function GET(request: Request) {
   try {
     const authHeaderRaw = request.headers.get('Authorization');
@@ -39,24 +41,18 @@ export async function GET(request: Request) {
       return NextResponse.json({ message: 'Unauthorized: No token provided' }, { status: 401 });
     }
 
-    // FIXED: Add await since getUserIdFromToken is async
     const userIdentifier = await getUserIdFromToken(token);
     if (!userIdentifier) {
       return NextResponse.json({ message: 'Unauthorized: Invalid token' }, { status: 401 });
     }
 
-    // FIXED: Based on your logs, getUserIdFromToken returns the user ID, not email
-    // Convert to number since it's the database ID
     const userId = parseInt(String(userIdentifier));
     if (isNaN(userId)) {
       return NextResponse.json({ message: 'Invalid user identifier' }, { status: 401 });
     }
 
-    // FIXED: Find user by ID instead of email, and handle tokenStats relationship properly
     const user = await prisma.beeusers.findUnique({
       where: { id: userId },
-      // Remove tokenStats from include if it doesn't exist in your schema
-      // include: { tokenStats: true },
     });
 
     if (!user) {
@@ -69,7 +65,6 @@ export async function GET(request: Request) {
       include: { apiaries: true },
     });
 
-    // FIXED: Handle tokenStats properly - either remove or create default values
     const tokenStats = {
       totalTokens: 0,
       remainingTokens: 0,
@@ -98,7 +93,7 @@ export async function GET(request: Request) {
   }
 }
 
-// POST: Create a new batch for logged-in user
+// FIXED POST: Handle the actual frontend data structure
 export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('Authorization');
@@ -111,31 +106,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized: No token provided' }, { status: 401 });
     }
 
-    // FIXED: Add await here since getUserIdFromToken is async
     const userIdentifier = await getUserIdFromToken(token);
     console.log('[POST] userIdentifier returned:', userIdentifier);
-    console.log('[POST] userIdentifier type:', typeof userIdentifier);
-    console.log('[POST] userIdentifier stringified:', JSON.stringify(userIdentifier));
 
     if (!userIdentifier) {
       return NextResponse.json({ message: 'Unauthorized: Invalid token' }, { status: 401 });
     }
 
-    // FIXED: Based on your logs, getUserIdFromToken returns the user ID as a string
-    // Convert to number for database query
     const userId = parseInt(String(userIdentifier));
     if (isNaN(userId)) {
       return NextResponse.json({ message: 'Invalid user identifier' }, { status: 401 });
     }
 
     console.log('[POST] Final userId for query:', userId);
-    console.log('[POST] Final userId type:', typeof userId);
 
-    // FIXED: Query by ID instead of email, and handle tokenStats properly
     const user = await prisma.beeusers.findUnique({
       where: { id: userId },
-      // Remove tokenStats from include if it doesn't exist in your schema
-      // include: { tokenStats: true },
     });
 
     if (!user) {
@@ -145,7 +131,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { batchNumber, batchName, apiaries = [] } = body;
+    const { batchNumber, batchName, apiaries = [], totalHives, totalHoney } = body;
 
     console.log('[POST] Request body:', body);
 
@@ -153,14 +139,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Batch number is required' }, { status: 400 });
     }
 
+    // FIXED: Validate apiaries array (not apiaryReferences)
+    if (!Array.isArray(apiaries) || apiaries.length === 0) {
+      return NextResponse.json({ message: 'At least one apiary is required' }, { status: 400 });
+    }
+
+    // Validate each apiary object
     for (const apiary of apiaries) {
-      if (!apiary.name || !apiary.number) {
-        return NextResponse.json({ message: 'Each apiary must have a name and number' }, { status: 400 });
+      if (!apiary.id || typeof apiary.id !== 'number') {
+        return NextResponse.json({ message: 'Each apiary must have a valid id' }, { status: 400 });
+      }
+      
+      // Verify the apiary exists and belongs to the user
+      const existingApiary = await prisma.apiary.findFirst({
+        where: { 
+          id: apiary.id,
+          userId: user.id 
+        }
+      });
+      
+      if (!existingApiary) {
+        return NextResponse.json({ 
+          message: `Apiary with ID ${apiary.id} not found or doesn't belong to user` 
+        }, { status: 404 });
       }
     }
 
     const finalBatchName = batchName?.trim() || `${batchNumber}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
 
+    // Check if batch number already exists for this user
     const existingBatch = await prisma.batch.findFirst({
       where: { batchNumber, userId: user.id },
     });
@@ -169,6 +176,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Batch number already exists' }, { status: 409 });
     }
 
+    // STEP 1: Create the batch
     const batch = await prisma.batch.create({
       data: {
         user: { connect: { id: user.id } },
@@ -176,7 +184,7 @@ export async function POST(request: NextRequest) {
         batchName: finalBatchName,
         containerType: 'Glass',
         labelType: 'Standard',
-        weightKg: 0,
+        weightKg: totalHoney || 0,
         originOnly: 0,
         qualityOnly: 0,
         bothCertifications: 0,
@@ -192,59 +200,34 @@ export async function POST(request: NextRequest) {
 
     console.log('[POST] Created batch:', batch);
 
-    const createdApiaries = [];
+    // STEP 2: UPDATE existing apiaries with batch ID
+    const updatedApiaries = [];
 
-    for (const apiaryData of apiaries) {
-      console.log('[POST] Processing apiary:', apiaryData);
+    for (const apiary of apiaries) {
+      console.log('[POST] Updating apiary with ID:', apiary.id);
       
-      if (apiaryData.locationId?.trim()) {
-        const locationId = parseInt(apiaryData.locationId);
-        if (isNaN(locationId)) throw new Error(`Invalid locationId: ${apiaryData.locationId}`);
-
-        const existingLocation = await prisma.apiary.findUnique({ where: { id: locationId } });
-        if (!existingLocation) throw new Error(`Location with ID ${locationId} not found`);
-
-        const updatedApiary = await prisma.apiary.update({
-          where: { id: locationId },
-          data: {
-            name: apiaryData.name,
-            number: apiaryData.number,
-            hiveCount: apiaryData.hiveCount ? parseInt(String(apiaryData.hiveCount)) : 0,
-            kilosCollected: apiaryData.kilosCollected ? parseFloat(String(apiaryData.kilosCollected)) : 0,
-            batch: { connect: { id: batch.id } }, // Connect via batch relation
-            user: { connect: { id: user.id } }, // Connect the apiary to the user
-          },
-        });
-        createdApiaries.push(updatedApiary);
-      } else {
-        const hiveCount = apiaryData.hiveCount ? parseInt(String(apiaryData.hiveCount)) : 0;
-        const kilosCollected = apiaryData.kilosCollected ? parseFloat(String(apiaryData.kilosCollected)) : 0;
-        const latitude = apiaryData.latitude ? parseFloat(String(apiaryData.latitude)) : 0;
-        const longitude = apiaryData.longitude ? parseFloat(String(apiaryData.longitude)) : 0;
-
-        const newApiary = await prisma.apiary.create({
-          data: {
-            name: apiaryData.name || '',
-            number: apiaryData.number || '',
-            hiveCount,
-            kilosCollected,
-            latitude: !isNaN(latitude) ? latitude : 0,
-            longitude: !isNaN(longitude) ? longitude : 0,
-            batch: { connect: { id: batch.id } }, // Connect via batch relation
-            user: { connect: { id: user.id } }, // Connect the apiary to the user
-          },
-        });
-        createdApiaries.push(newApiary);
-      }
+      // UPDATE the existing apiary record to link it to the batch
+      const updatedApiary = await prisma.apiary.update({
+        where: { id: apiary.id },
+        data: {
+          batchId: batch.id, // Link to the batch
+          // Keep the existing kilosCollected value from the apiary object
+        },
+      });
+      
+      updatedApiaries.push(updatedApiary);
+      console.log('[POST] Updated apiary:', updatedApiary);
     }
 
-    console.log('[POST] Created apiaries:', createdApiaries);
+    console.log('[POST] All apiaries updated successfully');
 
+    // STEP 3: Return the complete batch with associated apiaries
     const completeBatch = await prisma.batch.findUnique({
       where: { id: batch.id },
       include: { apiaries: true },
     });
 
+    // Get updated list of all batches for the user
     const batches = await prisma.batch.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
@@ -257,6 +240,7 @@ export async function POST(request: NextRequest) {
       batch: completeBatch, 
       batchNumber: completeBatch?.batchNumber,
       batches,
+      message: `Batch created successfully and ${updatedApiaries.length} existing apiaries updated`
     }, { status: 201 });
 
   } catch (error) {
