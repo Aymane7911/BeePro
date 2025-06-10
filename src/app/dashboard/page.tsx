@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2, Globe, FileText, AlertCircle, Sparkles, LogOut, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 
 // Define your interfaces here, right after imports
 interface TokenStats {
@@ -161,6 +162,7 @@ export default function JarManagementDashboard() {
   const [showLocationConfirm, setShowLocationConfirm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<LocationCoordinates | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
+  const [mapsLinkInput, setMapsLinkInput] = useState('');
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const miniMapRef = useRef<HTMLDivElement | null>(null); 
   const miniGoogleMapRef = useRef<google.maps.Map | null>(null);
@@ -185,6 +187,7 @@ export default function JarManagementDashboard() {
   honeyCollected: 0,
   location: null
 });
+const [isLoggingOut, setIsLoggingOut] = useState(false);
 const [isOpen, setIsOpen] = useState(false);
   
 // Function to create authenticated API headers
@@ -225,8 +228,183 @@ const [isOpen, setIsOpen] = useState(false);
   const [batchNumber, setBatchNumber] = useState('');
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [batchName, setBatchName] = useState(''); // Added batch name field
-  
-  
+
+
+  {/* Add this function to extract coordinates from Google Maps links */}
+
+{/* Add this function to handle manual coordinate input */}
+const parseManualCoordinates = (input) => {
+  try {
+    // Clean the input and try different formats
+    const cleanInput = input.trim().replace(/[^\d.,-]/g, '');
+    
+    // Try different coordinate formats
+    const formats = [
+      // Format: "lat, lng" or "lat,lng"
+      /^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/,
+      // Format: "lat lng" (space separated)
+      /^(-?\d+\.?\d*)\s+(-?\d+\.?\d*)$/
+    ];
+
+    for (const format of formats) {
+      const match = cleanInput.match(format);
+      if (match) {
+        const lat = parseFloat(match[1]);
+        const lng = parseFloat(match[2]);
+        
+        // Validate coordinates
+        if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+          return { lat, lng };
+        }
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error parsing manual coordinates:', error);
+    return null;
+  }
+};
+
+{/* Add this function to extract coordinates from Google Maps links */}
+const extractCoordinatesFromMapsLink = async (url) => {
+  try {
+    // First check if the input looks like manual coordinates
+    const manualCoords = parseManualCoordinates(url);
+    if (manualCoords) {
+      return manualCoords;
+    }
+
+    let workingUrl = url;
+    
+    // Handle different Google Maps URL formats
+    const patterns = [
+      // Format: https://www.google.com/maps/@lat,lng,zoom
+      /@(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+      // Format: https://maps.google.com/?q=lat,lng
+      /q=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+      // Format: https://www.google.com/maps/place/@lat,lng
+      /place\/@(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+      // Format: https://goo.gl/maps or similar with coordinates (encoded format)
+      /!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/,
+      // Format: Standard coordinates in URL
+      /(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+      // Format: Alternative coordinate format
+      /ll=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+      // Format: Another common format
+      /center=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+      // Format: Plus codes and other formats
+      /data=.*?3d(-?\d+\.?\d*).*?4d(-?\d+\.?\d*)/
+    ];
+
+    // Try to extract from the original URL first
+    for (const pattern of patterns) {
+      const match = workingUrl.match(pattern);
+      if (match) {
+        const lat = parseFloat(match[1]);
+        const lng = parseFloat(match[2]);
+        
+        // Validate coordinates
+        if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+          console.log('Successfully extracted coordinates:', { lat, lng });
+          return { lat, lng };
+        }
+      }
+    }
+    
+    // For shortened URLs, try opening in a new window approach (user-initiated)
+    if (url.includes('goo.gl') || url.includes('maps.app.goo.gl')) {
+      console.log('Detected shortened URL - cannot automatically expand due to CORS restrictions');
+      return 'SHORTENED_URL';
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error parsing maps link:', error);
+    return null;
+  }
+};
+
+{/* Add this function to handle maps link processing */}
+const handleMapsLinkSubmit = async () => {
+  if (!mapsLinkInput.trim()) {
+    alert('Please enter a Google Maps link or coordinates');
+    return;
+  }
+
+  try {
+    const coordinates = await extractCoordinatesFromMapsLink(mapsLinkInput);
+    
+    if (coordinates === 'SHORTENED_URL') {
+      // Handle shortened URLs with special instructions
+      const userChoice = confirm(
+        'This appears to be a shortened Google Maps link. Due to browser security restrictions, we cannot automatically extract coordinates from shortened links.\n\n' +
+        'Would you like to:\n\n' +
+        '• Click "OK" to open the link in a new tab so you can copy the full URL\n' +
+        '• Click "Cancel" to manually enter coordinates instead\n\n' +
+        'Instructions:\n' +
+        '1. The link will open in a new tab\n' +
+        '2. Copy the full URL from the address bar\n' +
+        '3. Come back and paste that URL here\n' +
+        '4. Or copy the coordinates and paste them as "latitude, longitude"'
+      );
+      
+      if (userChoice) {
+        // Open the shortened URL in a new tab
+        window.open(mapsLinkInput, '_blank');
+        alert('The link has been opened in a new tab. Please copy the full URL from the address bar and paste it here, or copy the coordinates and enter them as "latitude, longitude".');
+      } else {
+        alert('You can also enter coordinates directly in the format: "25.2048, 55.2708" (latitude, longitude)');
+      }
+      return;
+    }
+    
+    if (coordinates) {
+      const newLocation = {
+        id: Date.now(),
+        name: `Location from ${mapsLinkInput.includes('http') ? 'Maps Link' : 'Coordinates'}`,
+        latitude: coordinates.lat,
+        longitude: coordinates.lng,
+        lat: coordinates.lat,
+        lng: coordinates.lng,
+        createdAt: new Date().toISOString()
+      };
+
+      setApiaryFormData(prev => ({
+        ...prev,
+        location: newLocation
+      }));
+
+      // Center the map on the new location
+      if (miniGoogleMapRef.current) {
+        const newCenter = new google.maps.LatLng(coordinates.lat, coordinates.lng);
+        miniGoogleMapRef.current.setCenter(newCenter);
+        miniGoogleMapRef.current.setZoom(15);
+      }
+
+      // Clear the input
+      setMapsLinkInput('');
+      
+      alert(`Location set successfully! Coordinates: ${coordinates.lat.toFixed(6)}, ${coordinates.lng.toFixed(6)}`);
+    } else {
+      alert(
+        'Could not extract coordinates. Please try:\n\n' +
+        '📍 DIRECT COORDINATES:\n' +
+        '   • Format: "25.2048, 55.2708"\n' +
+        '   • Format: "25.2048 55.2708"\n\n' +
+        '🔗 GOOGLE MAPS LINKS:\n' +
+        '   • Full URL from browser address bar\n' +
+        '   • Right-click on location → "What\'s here?" → copy coordinates\n\n' +
+        '📱 FROM MOBILE APP:\n' +
+        '   • Share → Copy Link (then open link in browser and copy full URL)\n' +
+        '   • Long press on location → copy coordinates'
+      );
+    }
+  } catch (error) {
+    console.error('Error processing maps link:', error);
+    alert('An error occurred while processing the input. Please try entering coordinates directly in the format: "latitude, longitude"');
+  }
+};
 
  
 
@@ -576,6 +754,7 @@ useEffect(() => {
       name: newApiary.name,
       number: newApiary.number,
       hiveCount: Number(newApiary.hiveCount) || 0,
+      honeyCollected: newApiary.honeyCollected,
       location: {
         id: newApiary.location?.id,
         name: newApiary.location?.name,
@@ -677,6 +856,57 @@ useEffect(() => {
     </div>
   )
 );
+
+// Define performLogout function
+const performLogout = async () => {
+  // Clear local storage
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('user');
+  
+  // Clear session storage
+  sessionStorage.clear();
+  
+  // Make API call to backend logout endpoint if needed
+  try {
+    await fetch('/api/auth/logout', { 
+      method: 'POST',
+      credentials: 'include' // Include cookies
+    });
+  } catch (error) {
+    console.warn('Backend logout failed:', error);
+  }
+};
+
+const handleLogout = async () => {
+  try {
+    setIsLoggingOut(true);
+    console.log('Starting logout process...');
+    
+    // Clear client-side auth data and call logout API
+    await performLogout();
+    
+    // Also sign out from NextAuth if using OAuth
+    await signOut({ redirect: false });
+    
+    console.log('Logout completed, redirecting to login...');
+    
+    // Redirect to login page
+    router.push('/login');
+    
+    // Force a hard refresh to ensure all state is cleared
+    setTimeout(() => {
+      window.location.href = '/login';
+    }, 100);
+    
+  } catch (error) {
+    console.error('Logout error:', error);
+    // Still redirect even if there's an error
+    router.push('/login');
+  } finally {
+    setIsLoggingOut(false);
+  }
+};
 
 // Add this component for displaying saved locations in the apiary modal
 const SavedLocationsSelector = () => (
@@ -1423,10 +1653,7 @@ useEffect(() => {
           } catch (error) {
             console.error('Error creating mini map:', error);
             
-            // Retry if attempt failed
-            if (attempt < 3) {
-              setTimeout(() => initMiniMap(attempt + 1), 1000);
-            }
+            
           }
         } else {
           console.log(`Mini map ref not found on attempt ${attempt}`);
@@ -1604,15 +1831,16 @@ const addApiaryMarkersToMap = (map: any) => {
     
     // Update the apiary form data with the selected location - FIXED TYPE ISSUE
     setApiaryFormData((prev) => ({
-      ...prev,
-      location: {
-        latitude: lat, // Now number instead of string
-        longitude: lng, // Now number instead of string
-        name: `Location ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
-        id: Date.now() // Add required id field
-      }
-    }));
-
+  ...prev,
+  location: {
+    lat: lat,
+    lng: lng,
+    latitude: lat,
+    longitude: lng,
+    name: `Location ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+    id: Date.now()
+  }
+}));
     // Add a temporary marker to show selected location
     if (tempMarker.current) {
       tempMarker.current.setMap(null);
@@ -1980,32 +2208,33 @@ const handleLocationCancel = () => {
 
             {/* Logout Button (Preserved) */}
             <button
-              onClick={() => {
-                console.log('Logging out...');
-                router.push('/login');
-              }}
-              className="group relative overflow-hidden px-6 py-3 
-                         bg-gradient-to-r from-red-600 to-rose-500 
-                         text-white rounded-xl font-semibold shadow-2xl
-                         transform transition-all duration-500 
-                         hover:from-red-500 hover:to-rose-400 
-                         hover:scale-105 hover:shadow-red-500/30 hover:-translate-y-2
-                         active:scale-95 active:translate-y-0
-                         flex items-center border border-red-400/20"
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent 
-                             transform -skew-x-12 -translate-x-full 
-                             group-hover:translate-x-full transition-transform duration-600"></div>
-              
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-red-400 to-rose-400 
-                             opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm"></div>
-              
-              <LogOut className="w-5 h-5 mr-3 relative z-10 transition-all duration-300 
-                               group-hover:-rotate-12 group-hover:scale-110" />
-              <span className="relative z-10 transition-all duration-300 group-hover:tracking-wider">
-                Logout
-              </span>
-            </button>
+      onClick={handleLogout}
+      disabled={isLoggingOut}
+      className="group relative overflow-hidden px-6 py-3
+                 bg-gradient-to-r from-red-600 to-rose-500
+                 text-white rounded-xl font-semibold shadow-2xl
+                 transform transition-all duration-500
+                 hover:from-red-500 hover:to-rose-400
+                 hover:scale-105 hover:shadow-red-500/30 hover:-translate-y-2
+                 active:scale-95 active:translate-y-0
+                 flex items-center border border-red-400/20
+                 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent
+                      transform -skew-x-12 -translate-x-full
+                      group-hover:translate-x-full transition-transform duration-600"></div>
+      
+      <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-red-400 to-rose-400
+                      opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm"></div>
+      
+      <LogOut className={`w-5 h-5 mr-3 relative z-10 transition-all duration-300
+                         group-hover:-rotate-12 group-hover:scale-110
+                         ${isLoggingOut ? 'animate-spin' : ''}`} />
+      
+      <span className="relative z-10 transition-all duration-300 group-hover:tracking-wider">
+        {isLoggingOut ? 'Logging out...' : 'Logout'}
+      </span>
+    </button>
           </div>
         </div>
         
@@ -2471,101 +2700,169 @@ const handleLocationCancel = () => {
               </div>
             </div>
 
-            {/* Location Section */}
-            <div className="bg-white p-4 rounded-lg shadow-sm border">
-              <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
-                <div className="bg-green-100 p-1 rounded mr-2">
-                  <MapPin className="h-4 w-4 text-green-600" />
-                </div>
-                Location Settings
-              </h4>
+           <div className="bg-white p-4 rounded-lg shadow-sm border">
+  <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
+    <div className="bg-green-100 p-1 rounded mr-2">
+      <MapPin className="h-4 w-4 text-green-600" />
+    </div>
+    Location Settings
+  </h4>
 
-              {/* Current Location Display */}
-              {apiaryFormData.location ? (
-                <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <div className="flex items-center mb-2">
-                        <div className="bg-green-100 p-1 rounded mr-2">
-                          <CheckCircle className="h-4 w-4 text-green-600" />
-                        </div>
-                        <p className="font-medium text-green-800">
-                          {apiaryFormData.location.name || 'Selected Location'}
-                        </p>
-                      </div>
-                      <p className="text-sm text-green-600 ml-7">
-                        📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
-                      title="Remove location"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-center">
-                    <div className="bg-amber-100 p-1 rounded mr-2">
-                      <AlertCircle className="h-4 w-4 text-amber-600" />
-                    </div>
-                    <p className="text-sm text-amber-800">
-                      Click on the map to set the apiary location
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Saved Locations Dropdown */}
-              {savedApiaryLocations.length > 0 && (
-  <div className="mb-4">
-    <label className="block text-sm font-medium text-gray-700 mb-2">
-      Quick Select from Saved Locations
-    </label>
-    <select
-      value=""
-      onChange={(e) => {
-        const locationId = e.target.value;
-        if (locationId) {
-          const selectedLocation = savedApiaryLocations.find(loc => loc.id === parseInt(locationId));
-          if (selectedLocation) {
-            console.log('Selected location from saved locations:', selectedLocation);
-            
-            // Create proper ApiaryLocation object
-            const apiaryLocation: ApiaryLocation = {
-              id: selectedLocation.id,
-              name: selectedLocation.name,
-              latitude: selectedLocation.latitude,
-              longitude: selectedLocation.longitude,
-              lat: selectedLocation.latitude,  // Required by LocationCoordinates
-              lng: selectedLocation.longitude, // Required by LocationCoordinates
-              createdAt: selectedLocation.createdAt
-            };
-            
-            setApiaryFormData(prev => ({
-              ...prev,
-              location: apiaryLocation
-            }));
-          }
-          (e.target as HTMLSelectElement).value = "";
-        }
-      }}
-      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-    >
-      <option value="">Select your location...</option>
-      {savedApiaryLocations.map(location => (
-        <option key={location.id} value={location.id}>
-          {location.name} - Lat: {location.latitude?.toFixed(4)}, Lng: {location.longitude?.toFixed(4)}
-        </option>
-      ))}
-    </select>
-  </div>
-)}
+  {/* Current Location Display */}
+  {apiaryFormData.location ? (
+    <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+      <div className="flex justify-between items-start">
+        <div className="flex-1">
+          <div className="flex items-center mb-2">
+            <div className="bg-green-100 p-1 rounded mr-2">
+              <CheckCircle className="h-4 w-4 text-green-600" />
             </div>
+            <p className="font-medium text-green-800">
+              {apiaryFormData.location.name || 'Selected Location'}
+            </p>
+          </div>
+          <p className="text-sm text-green-600 ml-7">
+            📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
+          className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+          title="Remove location"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
+      <div className="flex items-center">
+        <div className="bg-amber-100 p-1 rounded mr-2">
+          <AlertCircle className="h-4 w-4 text-amber-600" />
+        </div>
+        <p className="text-sm text-amber-800">
+          Click on the map or paste a Google Maps link to set the apiary location
+        </p>
+      </div>
+    </div>
+  )}
+
+  {/* Google Maps Link Input Section */}
+  <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+    <div className="flex items-center mb-3">
+      <div className="bg-blue-100 p-1 rounded mr-2">
+        <Globe className="h-4 w-4 text-blue-600" />
+      </div>
+      <h5 className="font-medium text-blue-800">Set Location via Link or Coordinates</h5>
+    </div>
+    
+    <p className="text-sm text-blue-600 mb-3">
+      Paste a Google Maps link or enter coordinates directly
+    </p>
+    
+    <div className="flex space-x-2">
+      <input
+        type="text"
+        value={mapsLinkInput}
+        onChange={(e) => setMapsLinkInput(e.target.value)}
+        className="flex-1 px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+        placeholder="https://maps.google.com/... or 25.2048, 55.2708"
+      />
+      <button
+        type="button"
+        onClick={handleMapsLinkSubmit}
+        disabled={!mapsLinkInput.trim()}
+        className={`px-4 py-2 rounded-lg text-white font-medium transition-all flex items-center space-x-1 ${
+          mapsLinkInput.trim()
+            ? 'bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg'
+            : 'bg-gray-300 cursor-not-allowed'
+        }`}
+      >
+        <MapPin className="h-4 w-4" />
+        <span className="text-sm">Set</span>
+      </button>
+    </div>
+    
+    <div className="mt-3 text-xs text-blue-500">
+      <p>💡 <strong>Supported formats:</strong></p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 ml-4">
+        <div>
+          <p><strong>📍 Direct Coordinates:</strong></p>
+          <ul className="ml-2 space-y-1">
+            <li>• 25.2048, 55.2708</li>
+            <li>• 25.2048 55.2708</li>
+          </ul>
+        </div>
+        <div>
+          <p><strong>🔗 Google Maps Links:</strong></p>
+          <ul className="ml-2 space-y-1">
+            <li>• Full browser URLs</li>
+            <li>• maps.google.com links</li>
+            <li>• Place sharing links</li>
+          </ul>
+        </div>
+      </div>
+      <div className="mt-2 p-2 bg-blue-100 rounded text-blue-700">
+        <p><strong>📱 For shortened links (goo.gl, maps.app.goo.gl):</strong></p>
+        <p>Click "Set" and we'll help you get the full URL or coordinates!</p>
+      </div>
+    </div>
+  </div>
+
+  {/* Saved Locations Dropdown */}
+  {savedApiaryLocations.length > 0 && (
+    <div className="mb-4">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Quick Select from Saved Locations
+      </label>
+      <select
+        value=""
+        onChange={(e) => {
+          const locationId = e.target.value;
+          if (locationId) {
+            const selectedLocation = savedApiaryLocations.find(loc => loc.id === parseInt(locationId));
+            if (selectedLocation) {
+              console.log('Selected location from saved locations:', selectedLocation);
+              
+              // Create proper ApiaryLocation object
+              const apiaryLocation = {
+                id: selectedLocation.id,
+                name: selectedLocation.name,
+                latitude: selectedLocation.latitude,
+                longitude: selectedLocation.longitude,
+                lat: selectedLocation.latitude,  // Required by LocationCoordinates
+                lng: selectedLocation.longitude, // Required by LocationCoordinates
+                createdAt: selectedLocation.createdAt
+              };
+              
+              setApiaryFormData(prev => ({
+                ...prev,
+                location: apiaryLocation
+              }));
+
+              // Center the map on the selected location
+              if (miniGoogleMapRef.current) {
+                const newCenter = new google.maps.LatLng(selectedLocation.latitude, selectedLocation.longitude);
+                miniGoogleMapRef.current.setCenter(newCenter);
+                miniGoogleMapRef.current.setZoom(15);
+              }
+            }
+            (e.target as HTMLSelectElement).value = "";
+          }
+        }}
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+      >
+        <option value="">Select your location...</option>
+        {savedApiaryLocations.map(location => (
+          <option key={location.id} value={location.id}>
+            {location.name} - Lat: {location.latitude?.toFixed(4)}, Lng: {location.longitude?.toFixed(4)}
+          </option>
+        ))}
+      </select>
+    </div>
+  )}
+</div>
           </div>
         </div>
 

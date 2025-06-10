@@ -58,6 +58,7 @@ model Batch {
   completedChecks           Int      @default(0)
   totalChecks               Int      @default(4)
   certificationDate         String?
+  jarCertifications         Json?    // ADD THIS LINE
   expiryDate                String?
   productionReportPath      String?  @map("production_report_path")
   labReportPath             String?  @map("lab_report_path")

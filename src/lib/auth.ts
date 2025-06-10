@@ -1,4 +1,4 @@
-// /lib/auth.ts - Simplified JWT-only authentication
+// /lib/auth.ts - Simplified JWT-only authentication with user existence validation
 import { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import LinkedInProvider from "next-auth/providers/linkedin";
@@ -134,7 +134,7 @@ export function createJWTToken(userId: number, email: string): string {
 }
 
 /**
- * Verifies and extracts user ID from JWT token
+ * Enhanced JWT verification that checks if user still exists in database
  */
 export async function getUserIdFromToken(token: string): Promise<string | null> {
   try {
@@ -168,14 +168,11 @@ export async function getUserIdFromToken(token: string): Promise<string | null> 
       exp: decoded.exp
     });
 
-    if (decoded.userId) {
-      console.log('[getUserIdFromToken] Using userId from JWT:', decoded.userId);
-      return decoded.userId.toString();
-    }
+    let userId: string | null = null;
 
-    if (decoded.email) {
-      console.log('[getUserIdFromToken] Using email from JWT:', decoded.email);
-      
+    if (decoded.userId) {
+      userId = decoded.userId.toString();
+    } else if (decoded.email) {
       // Fallback: lookup user by email
       const dbUser = await prisma.beeusers.findUnique({
         where: { email: decoded.email },
@@ -183,13 +180,28 @@ export async function getUserIdFromToken(token: string): Promise<string | null> 
       });
       
       if (dbUser) {
-        console.log('[getUserIdFromToken] Found database user ID:', dbUser.id);
-        return dbUser.id.toString();
+        userId = dbUser.id.toString();
       }
     }
 
-    console.warn('[getUserIdFromToken] No valid user identifier in JWT');
-    return null;
+    if (!userId) {
+      console.warn('[getUserIdFromToken] No valid user identifier in JWT');
+      return null;
+    }
+
+    // CRITICAL: Check if user still exists in database
+    const userExists = await prisma.beeusers.findUnique({
+      where: { id: parseInt(userId) },
+      select: { id: true }
+    });
+
+    if (!userExists) {
+      console.warn('[getUserIdFromToken] User no longer exists in database:', userId);
+      return null;
+    }
+
+    console.log('[getUserIdFromToken] User verified and exists:', userId);
+    return userId;
 
   } catch (error: any) {
     if (error.name === 'TokenExpiredError') {
@@ -258,6 +270,67 @@ export async function getCurrentUser(request: NextRequest) {
   } catch (error) {
     console.error('[getCurrentUser] Error:', error);
     return null;
+  }
+}
+
+/**
+ * Client-side logout utility
+ */
+export function clearClientSession() {
+  // Clear localStorage
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('token');
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('user');
+    localStorage.removeItem('next-auth.session-token');
+    localStorage.removeItem('next-auth.csrf-token');
+    
+    // Clear sessionStorage as well
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('accessToken');
+    sessionStorage.removeItem('user');
+    
+    // Clear any other auth-related items you might have
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('next-auth') || key.startsWith('auth')) {
+        localStorage.removeItem(key);
+      }
+    });
+    
+    console.log('[clearClientSession] All client-side auth data cleared');
+  }
+}
+
+/**
+ * Complete logout function for frontend use
+ */
+export async function performLogout() {
+  try {
+    console.log('[performLogout] Starting logout process...');
+    
+    // Call logout API
+    const response = await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.warn('[performLogout] Logout API failed, continuing with client cleanup');
+    }
+
+    // Clear client-side data regardless of API response
+    clearClientSession();
+    
+    console.log('[performLogout] Logout completed successfully');
+    return true;
+  } catch (error) {
+    console.error('[performLogout] Error during logout:', error);
+    // Still clear client-side data even if API fails
+    clearClientSession();
+    return false;
   }
 }
 

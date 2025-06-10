@@ -6,6 +6,7 @@ import { Menu, X, Search, ChevronDown, ChevronUp, Printer, PlusCircle, Check, Al
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useRouter } from 'next/navigation';
 
+
 interface Apiary {
   batchId: string,
   batchNumber: string,
@@ -14,7 +15,7 @@ interface Apiary {
   hiveCount: number;
   latitude: number;
   longitude: number;
-  kilosCollected: number;
+  honeyCollected: number;
 }
 interface FormApiary extends Apiary {
   batchId: string;
@@ -92,13 +93,25 @@ interface SelectedApiary extends Apiary {
   kilosCollected: number; // Override to ensure this is always present
 }
 
+interface LocationCoordinates {
+  latitude: number;  // Changed from lat to latitude
+  longitude: number; // Changed from lng to longitude
+}
+
+interface ApiaryLocation extends LocationCoordinates {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  createdAt?: string;
+}
+
 interface ApiaryFormData {
   name: string;
   number: string;
   hiveCount: number;
-  kilosCollected: number; // Changed from honeyCollected to match schema
-  latitude: number;       // Non-nullable to match Prisma
-  longitude: number;      // Non-nullable to match Prisma
+  honeyCollected: number;
+  location: ApiaryLocation | null;
 }
 
 
@@ -143,9 +156,8 @@ const [apiaryFormData, setApiaryFormData] = useState<ApiaryFormData>({
   name: '',
   number: '',
   hiveCount: 0,
-  kilosCollected: 0, // Changed from honeyCollected
-  latitude: 0,       // Default to 0 instead of null
-  longitude: 0       // Default to 0 instead of null
+  honeyCollected: 0,
+  location: null
 });
 
 
@@ -419,8 +431,87 @@ const [formData, setFormData] = useState({
     kilosCollected: 0,
   }]
 });
+const [mapsLinkInput, setMapsLinkInput] = useState('');
+{/* Add this function to handle maps link processing */}
+const handleMapsLinkSubmit = async () => {
+  if (!mapsLinkInput.trim()) {
+    alert('Please enter a Google Maps link or coordinates');
+    return;
+  }
 
+  try {
+    const coordinates = await extractCoordinatesFromMapsLink(mapsLinkInput);
+    
+    if (coordinates === 'SHORTENED_URL') {
+      // Handle shortened URLs with special instructions
+      const userChoice = confirm(
+        'This appears to be a shortened Google Maps link. Due to browser security restrictions, we cannot automatically extract coordinates from shortened links.\n\n' +
+        'Would you like to:\n\n' +
+        '• Click "OK" to open the link in a new tab so you can copy the full URL\n' +
+        '• Click "Cancel" to manually enter coordinates instead\n\n' +
+        'Instructions:\n' +
+        '1. The link will open in a new tab\n' +
+        '2. Copy the full URL from the address bar\n' +
+        '3. Come back and paste that URL here\n' +
+        '4. Or copy the coordinates and paste them as "latitude, longitude"'
+      );
+      
+      if (userChoice) {
+        // Open the shortened URL in a new tab
+        window.open(mapsLinkInput, '_blank');
+        alert('The link has been opened in a new tab. Please copy the full URL from the address bar and paste it here, or copy the coordinates and enter them as "latitude, longitude".');
+      } else {
+        alert('You can also enter coordinates directly in the format: "25.2048, 55.2708" (latitude, longitude)');
+      }
+      return;
+    }
+    
+    if (coordinates) {
+      const newLocation = {
+        id: Date.now(),
+        name: `Location from ${mapsLinkInput.includes('http') ? 'Maps Link' : 'Coordinates'}`,
+        latitude: coordinates.lat,
+        longitude: coordinates.lng,
+        lat: coordinates.lat,
+        lng: coordinates.lng,
+        createdAt: new Date().toISOString()
+      };
 
+      setApiaryFormData(prev => ({
+        ...prev,
+        location: newLocation
+      }));
+
+      // Center the map on the new location
+      if (miniGoogleMapRef.current) {
+        const newCenter = new google.maps.LatLng(coordinates.lat, coordinates.lng);
+        miniGoogleMapRef.current.setCenter(newCenter);
+        miniGoogleMapRef.current.setZoom(15);
+      }
+
+      // Clear the input
+      setMapsLinkInput('');
+      
+      alert(`Location set successfully! Coordinates: ${coordinates.lat.toFixed(6)}, ${coordinates.lng.toFixed(6)}`);
+    } else {
+      alert(
+        'Could not extract coordinates. Please try:\n\n' +
+        '📍 DIRECT COORDINATES:\n' +
+        '   • Format: "25.2048, 55.2708"\n' +
+        '   • Format: "25.2048 55.2708"\n\n' +
+        '🔗 GOOGLE MAPS LINKS:\n' +
+        '   • Full URL from browser address bar\n' +
+        '   • Right-click on location → "What\'s here?" → copy coordinates\n\n' +
+        '📱 FROM MOBILE APP:\n' +
+        '   • Share → Copy Link (then open link in browser and copy full URL)\n' +
+        '   • Long press on location → copy coordinates'
+      );
+    }
+  } catch (error) {
+    console.error('Error processing maps link:', error);
+    alert('An error occurred while processing the input. Please try entering coordinates directly in the format: "latitude, longitude"');
+  }
+};
   
  
 
@@ -524,14 +615,8 @@ useEffect(() => {
 
   fetchBatches();
 }, []);
-// Google Maps initialization useEffect
 
 
-// Function to initialize maps for all apiaries
-// Function to initialize maps for all apiaries
-
-
-// Add this useEffect to initialize maps for all apiaries
 
 
   
@@ -615,6 +700,49 @@ useEffect(() => {
     alert('Profile information updated successfully!');
   };
   
+
+  // 3. Function to fetch saved apiary locations
+  const fetchSavedApiaryLocations = async () => {
+    try {
+      // Get auth token
+      let token = null;
+      if (typeof window !== 'undefined') {
+        token = localStorage.getItem('auth-token') ||
+                 localStorage.getItem('token') ||
+                 sessionStorage.getItem('auth-token');
+      }
+  
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+  
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+  
+      console.log('Fetching saved locations with auth...');
+      const response = await fetch('/api/apiaries/locations', {
+        headers,
+        credentials: 'include',
+      });
+  
+      if (response.ok) {
+        const locations = await response.json();
+        console.log('Fetched saved locations:', locations);
+        setSavedApiaryLocations(locations);
+      } else {
+        console.error('Failed to fetch saved locations:', response.status);
+      }
+    } catch (error) {
+      console.error('Error fetching apiary locations:', error);
+    }
+  };
+  
+  // 4. Call fetchSavedApiaryLocations on component mount
+  useEffect(() => {
+    fetchSavedApiaryLocations();
+  }, []);
+
   // Toggle sidebar
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -665,7 +793,6 @@ useEffect(() => {
  const handleCompleteBatch = async (e) => {
   e.preventDefault();
   const tokensUsed = tokenCalculation.tokensNeeded;
-  setTokenBalance(prevBalance => prevBalance - tokensUsed);
 
   // Check if all jars have certification types selected
   const allJarsHaveCertifications = Object.values(apiaryJars).flat().every(jar => 
@@ -718,38 +845,53 @@ useEffect(() => {
       throw new Error('No auth token found');
     }
 
+    // STEP 4: UPDATE TOKEN BALANCE IMMEDIATELY WHEN "PAY TOKEN" IS CLICKED
+    // Update localStorage first
+    const currentBalance = parseInt(localStorage.getItem('tokenBalance') || '0');
+    const newBalance = currentBalance - tokensUsed;
+    localStorage.setItem('tokenBalance', newBalance.toString());
+
+    // Update state immediately
+    setTokenBalance(newBalance);
+
+    // Dispatch custom event to update token balance across the app
+    window.dispatchEvent(new CustomEvent('tokensUpdated', {
+      detail: { 
+        action: 'deduct',
+        tokensDeducted: tokensUsed,
+        newBalance: newBalance,
+        batchIds: selectedBatches,
+        jarCount: tokensUsed
+      }
+    }));
+
     // Process each batch individually
     for (const batchId of selectedBatches) {
-      // Prepare batch-specific data
       const batchData = {
-  batchId,
-  updatedFields: {
-    status: 'Completed',
-    // Store jar certifications instead of single certification type
-    jarCertifications: jarCertifications,
-    certificationDate: new Date().toISOString().split('T')[0],
-    // Add expiry date (e.g., 2 years from certification)
-    expiryDate: new Date(Date.now() + 2 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    completedChecks: 4,
-    totalChecks: 4
-  },
-  apiaries: formData.apiaries
-    .filter(apiary => apiary.batchId === batchId || !apiary.batchId)
-    .map(apiary => {
-      const storedValue = apiaryHoneyValues[`${batchId}-${apiary.number}`];
-      return {
-        name: apiary.name,
-        number: apiary.number,
-        hiveCount: apiary.hiveCount,
-        // Fix: Use null instead of 0 for unset coordinates
-        latitude: apiary.latitude !== 0 ? apiary.latitude : null,
-        longitude: apiary.longitude !== 0 ? apiary.longitude : null,
-        kilosCollected: storedValue !== undefined ? storedValue : apiary.kilosCollected
+        batchId,
+        updatedFields: {
+          status: 'Completed',
+          jarCertifications: jarCertifications, // This will now work with the updated schema
+          certificationDate: new Date().toISOString().split('T')[0],
+          expiryDate: new Date(Date.now() + 2 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          completedChecks: 4,
+          totalChecks: 4
+        },
+        apiaries: formData.apiaries
+          .filter(apiary => apiary.batchId === batchId || !apiary.batchId)
+          .map(apiary => {
+            const storedValue = apiaryHoneyValues[`${batchId}-${apiary.number}`];
+            return {
+              name: apiary.name,
+              number: apiary.number,
+              hiveCount: apiary.hiveCount,
+              latitude: apiary.latitude !== 0 ? apiary.latitude : null,
+              longitude: apiary.longitude !== 0 ? apiary.longitude : null,
+              kilosCollected: storedValue !== undefined ? storedValue : apiary.kilosCollected
+            };
+          })
       };
-    })
-};
 
-      // Create FormData for this specific batch
       const batchFormData = new FormData();
       batchFormData.append('data', JSON.stringify(batchData));
       
@@ -761,7 +903,6 @@ useEffect(() => {
         batchFormData.append('labReport', formData.labReport);
       }
 
-      // Update the batch
       const response = await fetch('/api/batches', {
         method: 'PUT',
         headers: {
@@ -777,13 +918,13 @@ useEffect(() => {
       }
     }
 
-    // ✅ Update local state with new apiary values
-    const updatedBatches: Batch[] = batches.map(batch => {
+    // Update local state
+    const updatedBatches = batches.map(batch => {
       if (selectedBatches.includes(batch.id) && batch.apiaries && batch.apiaries.length > 0) {
         return {
           ...batch,
-          status: 'completed' as const, // Type assertion to match expected status type
-          jarCertifications: jarCertifications, // Store jar certifications instead of single type
+          status: 'completed',
+          jarCertifications: jarCertifications,
           apiaries: batch.apiaries.map(apiary => {
             const storedValue = apiaryHoneyValues[`${batch.id}-${apiary.number}`];
             return {
@@ -791,13 +932,12 @@ useEffect(() => {
               kilosCollected: storedValue !== undefined ? storedValue : apiary.kilosCollected
             };
           })
-        } as Batch; // Explicit type assertion
+        };
       }
       return batch;
     });
 
     setBatches(updatedBatches);
-    // Remove duplicate setBatches call
     setShowCompleteForm(false);
     setSelectedBatches([]);
     setFormData({
@@ -807,25 +947,33 @@ useEffect(() => {
       apiaries: []
     });
 
-    // ✅ Success notification
     setNotification({
       show: true,
       message: "Batch information completed successfully!",
       type: 'success'
     });
 
-    // ✅ Open profile prompt
     setTimeout(() => {
       setShowProfileNotification(true);
     }, 500);
 
-    // Refresh the batches list
-    //fetchBatches();
-
   } catch (error) {
     console.error('Error completing batches:', error);
-    // Restore token balance on error
-    setTokenBalance(prevBalance => prevBalance + tokensUsed);
+    
+    // RESTORE TOKEN BALANCE ON ERROR
+    const originalBalance = parseInt(localStorage.getItem('tokenBalance') || '0') + tokensUsed;
+    localStorage.setItem('tokenBalance', originalBalance.toString());
+    setTokenBalance(originalBalance);
+    
+    // Dispatch restore event
+    window.dispatchEvent(new CustomEvent('tokensUpdated', {
+      detail: { 
+        action: 'restore',
+        tokensRestored: tokensUsed,
+        newBalance: originalBalance
+      }
+    }));
+
     setNotification({
       show: true,
       message: error.message,
@@ -835,6 +983,267 @@ useEffect(() => {
     setIsLoading(false);
   }
 };
+
+async function saveApiaryToDatabase(apiaryData: any) {
+    console.log('=== SAVING APIARY - SINGLE SAVE ===');
+    console.log('Raw apiaryData received:', apiaryData);
+    
+    try {
+      // INPUT VALIDATION
+      if (!apiaryData.name || !apiaryData.number) {
+        throw new Error('Apiary name and number are required');
+      }
+  
+      // Enhanced location validation
+      if (!apiaryData.location) {
+        throw new Error('Location is required');
+      }
+  
+      // Extract and validate coordinates
+      let latitude, longitude;
+      
+      if (typeof apiaryData.location === 'object') {
+        latitude = apiaryData.location.latitude;
+        longitude = apiaryData.location.longitude;
+      } else {
+        throw new Error('Location must be an object with latitude and longitude');
+      }
+       const tokensNeeded = getTotalJarsAcrossApiaries();
+
+      // After successful batch completion, update token balance
+    const currentBalance = parseInt(localStorage.getItem('tokenBalance') || '0');
+    const newBalance = currentBalance - tokensNeeded;
+    
+    // Update localStorage
+    localStorage.setItem('tokenBalance', newBalance.toString());
+
+     // Dispatch custom event to update token balance across the app
+    window.dispatchEvent(new CustomEvent('tokensUpdated', {
+      detail: { 
+        action: 'deduct',
+        tokensDeducted: tokensNeeded,
+        newBalance: newBalance,
+        batchIds: selectedBatches,
+        jarCount: tokensNeeded
+      }
+    }));
+
+      // Convert to numbers and validate
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+  
+      if (isNaN(lat) || isNaN(lng)) {
+        console.error('Invalid coordinates:', { latitude, longitude, lat, lng });
+        throw new Error('Invalid latitude or longitude values');
+      }
+  
+      if (lat < -90 || lat > 90) {
+        throw new Error('Latitude must be between -90 and 90');
+      }
+  
+      if (lng < -180 || lng > 180) {
+        throw new Error('Longitude must be between -180 and 180');
+      }
+  
+      // PREPARE DATA - Send structure that matches your API interface
+      const dataForAPI = {
+        name: String(apiaryData.name).trim(),
+        number: String(apiaryData.number).trim(),
+        hiveCount: Math.max(0, parseInt(apiaryData.hiveCount) || 0),
+        honeyCollected: Math.max(0, parseFloat(apiaryData.honeyCollected) || 0),
+        location: {
+          latitude: lat,
+          longitude: lng
+        }
+      };
+  
+      console.log('Data being sent to API:', dataForAPI);
+  
+      // Get auth token
+      let token = null;
+      if (typeof window !== 'undefined') {
+        token = localStorage.getItem('auth-token') ||
+                 localStorage.getItem('token') ||
+                 sessionStorage.getItem('auth-token');
+      }
+  
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+  
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+  
+      console.log('Making SINGLE POST request to /api/apiaries');
+  
+      // SINGLE API CALL - This will create ONE apiary with a batchId
+      const response = await fetch('/api/apiaries', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify(dataForAPI)
+      });
+  
+      console.log('Response status:', response.status);
+  
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('API Error Response:', errorData);
+        
+        let errorMessage = 'Failed to save apiary';
+  
+        switch (response.status) {
+          case 401:
+            errorMessage = 'Authentication failed. Please log in again.';
+            break;
+          case 409:
+            errorMessage = errorData.message || errorData.error || 'An apiary with this name or number already exists.';
+            break;
+          case 400:
+            errorMessage = errorData.message || errorData.error || 'Invalid data provided.';
+            break;
+          case 500:
+            errorMessage = 'Server error. Please try again later.';
+            break;
+          default:
+            errorMessage = errorData.message || errorData.error || errorMessage;
+        }
+  
+        throw new Error(errorMessage);
+      }
+  
+      const result = await response.json();
+      console.log('Apiary saved successfully:', result);
+  
+      // Return the created apiary
+      return result;
+  
+    } catch (error) {
+      console.error('Error in saveApiaryToDatabase:', error);
+      throw error;
+    }
+  }
+  
+   
+  const refreshApiariesFromDatabase = async () => {
+    try {
+      console.log('=== REFRESH APIARIES DEBUG ===');
+      
+      // Enhanced token retrieval with better debugging
+      let token = null;
+      
+      if (typeof window !== 'undefined') {
+        // Check localStorage first
+        token = localStorage.getItem('auth-token');
+        console.log('localStorage token:', token ? 'exists' : 'missing');
+        
+        // Check sessionStorage as fallback
+        if (!token) {
+          token = sessionStorage.getItem('auth-token');
+          console.log('sessionStorage token:', token ? 'exists' : 'missing');
+        }
+        
+        // Check for other possible token names
+        if (!token) {
+          token = localStorage.getItem('token') || localStorage.getItem('authToken');
+          console.log('Alternative token names:', token ? 'exists' : 'missing');
+        }
+      }
+      
+      // Check cookies as last resort
+      if (!token && typeof document !== 'undefined') {
+        const cookieToken = document.cookie
+          .split('; ')
+          .find(row => row.startsWith('auth-token='))
+          ?.split('=')[1];
+        
+        if (cookieToken) {
+          token = cookieToken;
+          console.log('Cookie token found');
+        }
+      }
+      
+      console.log('Final token status:', token ? 'exists' : 'MISSING');
+      
+      // If no token found, throw early
+      if (!token) {
+        throw new Error('No authentication token found. Please log in again.');
+      }
+      
+      // Create headers with proper token format
+      const headers: { [key: string]: string } = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}` // Always include if we have a token
+      };
+      
+      console.log('Request headers:', {
+        ...headers,
+        'Authorization': token ? 'Bearer [TOKEN_EXISTS]' : 'MISSING'
+      });
+      
+      const response = await fetch('/api/apiaries', {
+        method: 'GET',
+        credentials: 'include', // This ensures cookies are sent
+        headers,
+      });
+      
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Refresh API Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText
+        });
+        
+        if (response.status === 401) {
+          // Clear invalid token
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('auth-token');
+            sessionStorage.removeItem('auth-token');
+          }
+          throw new Error('Authentication failed. Please log in again.');
+        }
+        
+        throw new Error(`Failed to fetch apiaries: ${response.status} ${response.statusText}`);
+      }
+      
+      const apiaries = await response.json();
+      console.log('Fetched apiaries count:', apiaries.length);
+      
+      setAvailableApiaries(apiaries);
+      console.log('Apiaries list refreshed successfully!');
+      
+    } catch (error: unknown) {
+      console.error('Error refreshing apiaries:', error);
+      
+      if (error instanceof Error) {
+        if (
+          error.message.includes('401') ||
+          error.message.toLowerCase().includes('authentication') ||
+          error.message.includes('No authentication token')
+        ) {
+          console.error('Authentication failed during refresh');
+          // Show user-friendly message
+          alert('Your session has expired. Please log in again.');
+          // Redirect to login page
+          window.location.href = '/login';
+        } else {
+          // Show other errors to user
+          alert(`Failed to load apiaries: ${error.message}`);
+        }
+      } else {
+        console.error('Unexpected error:', error);
+        alert('An unexpected error occurred while loading apiaries.');
+      }
+    }
+  };
+  useEffect(() => {
+    refreshApiariesFromDatabase();
+  }, []);
 
 
 
@@ -1080,6 +1489,14 @@ const [apiaryJars, setApiaryJars] = useState<{[key: number]: CustomJar[]}>({});
 const [newJarForApiary, setNewJarForApiary] = useState<{[key: number]: Omit<CustomJar, 'id'>}>({});
 const [jarCertifications, setJarCertifications] = useState<JarCertifications>({});
 
+const getSelectedType = (certificationState) => {
+  const { origin, quality } = certificationState || {};
+  if (origin && quality) return 'both';
+  if (origin) return 'origin';
+  if (quality) return 'quality';
+  return null;
+};
+
 // Add these helper functions
 const hasRequiredCertifications = () => {
   return Object.values(apiaryJars).flat().every(jar => jarCertifications[jar.id]?.selectedType);
@@ -1136,6 +1553,342 @@ useEffect(() => {
     window.removeEventListener('storage', handleStorageChange);
   };
 }, []);
+
+useEffect(() => {
+  const initMaps = () => {
+    if (window.google) {
+      console.log('Initializing maps...');
+      
+      // Common map configuration
+      const mapConfig = {
+        center: { lat: 52.0907, lng: 5.1214 }, // Netherlands coordinates
+        zoom: 8,
+        styles: [
+          {
+            featureType: 'poi',
+            elementType: 'labels',
+            stylers: [{ visibility: 'off' }]
+          },
+          {
+            featureType: 'transit',
+            elementType: 'labels',
+            stylers: [{ visibility: 'off' }]
+          }
+        ],
+        mapTypeControl: true,
+        mapTypeControlOptions: {
+          style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+          position: window.google.maps.ControlPosition.TOP_CENTER,
+        },
+        zoomControl: true,
+        zoomControlOptions: {
+          position: window.google.maps.ControlPosition.RIGHT_CENTER,
+        },
+        scaleControl: true,
+        streetViewControl: true,
+        streetViewControlOptions: {
+          position: window.google.maps.ControlPosition.RIGHT_TOP,
+        },
+        fullscreenControl: true
+      };
+
+      // Initialize main map for displaying apiary markers
+      if (mapRef.current) {
+        console.log('Initializing main map...');
+        const map = new window.google.maps.Map(mapRef.current, mapConfig);
+        googleMapRef.current = map;
+        console.log('Main map initialized');
+
+        // Add apiary markers to main map
+        addApiaryMarkersToMap(map);
+      } else {
+        console.log('Main map ref not found');
+      }
+
+      // Initialize mini map with better timing and error handling
+      const initMiniMap = (attempt = 1) => {
+        console.log(`Mini map initialization attempt ${attempt}`);
+        
+        if (miniMapRef.current) {
+          console.log('Mini map ref found, initializing...');
+          
+          try {
+            const miniMapConfig = {
+              ...mapConfig,
+              zoom: 6, // Slightly different zoom for mini map
+              zoomControl: false, // Custom zoom controls in overlay
+              mapTypeControl: false,
+              streetViewControl: false,
+              fullscreenControl: false
+            };
+
+            const miniMap = new window.google.maps.Map(miniMapRef.current, miniMapConfig);
+            miniGoogleMapRef.current = miniMap;
+            console.log('Mini map instance created successfully');
+            
+            // Force resize after a short delay to ensure proper rendering
+            setTimeout(() => {
+              console.log('Triggering mini map resize...');
+              window.google.maps.event.trigger(miniMap, 'resize');
+              miniMap.setCenter(mapConfig.center);
+            }, 100);
+
+            // Add click listener to mini map for apiary creation
+            miniMap.addListener('click', (event: any) => {
+              handleMiniMapClick(event);
+            });
+            
+            console.log('Mini map initialization complete');
+            
+          } catch (error) {
+            console.error('Error creating mini map:', error);
+            
+            
+          }
+        } else {
+          console.log(`Mini map ref not found on attempt ${attempt}`);
+          
+          // Retry up to 5 times with increasing delays
+          if (attempt < 5) {
+            setTimeout(() => initMiniMap(attempt + 1), attempt * 500);
+          } else {
+            console.error('Failed to initialize mini map after 5 attempts');
+          }
+        }
+      };
+      
+      // Start mini map initialization with delay to ensure modal is rendered
+      setTimeout(() => initMiniMap(), 200);
+    }
+  };
+
+  // Function to add apiary markers to the main map
+  // Function to add apiary markers to the main map
+const addApiaryMarkersToMap = (map: any) => {
+  // Clear existing markers
+  if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current)) {
+    apiaryMarkers.current.forEach((marker: any) => marker.setMap(null));
+  }
+  apiaryMarkers.current = [];
+
+  // Add markers for each apiary
+  if (Array.isArray(availableApiaries) && availableApiaries.length > 0) {
+    console.log('Adding apiary markers:', availableApiaries.length);
+    
+    availableApiaries.forEach((apiary, index) => {
+      if (index < 3) { // Only log first 3 to avoid spam
+        console.log('Full apiary object:', JSON.stringify(apiary, null, 2));
+      }
+
+      console.log('Processing apiary:', apiary.name, 'Latitude:', apiary.latitude, 'Longitude:', apiary.longitude);
+
+      // Check if apiary has coordinates (either in nested location or directly on apiary)
+      const hasNestedLocation = apiary.location && apiary.location.latitude && apiary.location.longitude;
+      const hasDirectCoordinates = apiary.latitude && apiary.longitude;
+
+      if (hasNestedLocation || hasDirectCoordinates) {
+        // Get coordinates from the appropriate location
+        const lat = hasNestedLocation 
+          ? (typeof apiary.location.latitude === 'string' ? parseFloat(apiary.location.latitude) : apiary.location.latitude)
+          : (typeof apiary.latitude === 'string' ? parseFloat(apiary.latitude) : apiary.latitude);
+        
+        const lng = hasNestedLocation 
+          ? (typeof apiary.location.longitude === 'string' ? parseFloat(apiary.location.longitude) : apiary.location.longitude)
+          : (typeof apiary.longitude === 'string' ? parseFloat(apiary.longitude) : apiary.longitude);
+        
+        console.log('Creating marker at:', { lat, lng });
+
+        const marker = new window.google.maps.Marker({
+          position: { lat, lng },
+          map: map,
+          title: `${apiary.name} (${apiary.number})`,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg width="40" height="50" viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#FCD34D;stop-opacity:1" />
+                    <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+                  </linearGradient>
+                </defs>
+                <path d="M20 0C13.373 0 8 5.373 8 12c0 9 12 28 12 28s12-19 12-28c0-6.627-5.373-12-12-12z" fill="url(#grad)" stroke="#D97706" stroke-width="2"/>
+                <circle cx="20" cy="12" r="6" fill="white"/>
+                <text x="20" y="17" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="#F59E0B">🍯</text>
+              </svg>
+            `),
+            scaledSize: new window.google.maps.Size(40, 50),
+            anchor: new window.google.maps.Point(20, 50)
+          },
+          animation: window.google.maps.Animation.DROP
+        });
+
+        // Add hover info window
+        const infoWindow = new window.google.maps.InfoWindow({
+          content: `
+            <div style="padding: 8px; min-width: 200px;">
+              <h3 style="margin: 0 0 8px 0; color: #1f2937; font-size: 16px; font-weight: bold;">
+                ${apiary.name}
+              </h3>
+              <div style="color: #6b7280; font-size: 14px; line-height: 1.4;">
+                <div><strong>ID:</strong> ${apiary.number}</div>
+                <div><strong>Hives:</strong> ${apiary.hiveCount}</div>
+                <div><strong>Honey:</strong> ${apiary.kilosCollected || apiary.honeyCollected || 0} kg</div>
+              </div>
+              <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 12px;">
+                Click for more details
+              </div>
+            </div>
+          `
+        });
+
+        // Add event listeners
+        marker.addListener('click', () => {
+          console.log('Apiary marker clicked:', apiary.name);
+          // Create a normalized apiary object for the modal
+          const normalizedApiary = {
+            ...apiary,
+            location: hasNestedLocation ? apiary.location : {
+              latitude: lat,
+              longitude: lng
+            },
+            honeyCollected: apiary.kilosCollected || apiary.honeyCollected || 0
+          };
+          setSelectedApiary(normalizedApiary);
+        });
+
+        // Show info window on hover
+        marker.addListener('mouseover', () => {
+          infoWindow.open(map, marker);
+        });
+
+        // Hide info window when mouse leaves
+        marker.addListener('mouseout', () => {
+          infoWindow.close();
+        });
+
+        // Store marker reference
+        if (Array.isArray(apiaryMarkers.current)) {
+          apiaryMarkers.current.push(marker);
+        }
+      } else {
+        console.log('Apiary has no valid coordinates:', apiary.name);
+      }
+    });
+
+    // Adjust map bounds to fit all markers if there are any
+    if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current) && apiaryMarkers.current.length > 0) {
+      const bounds = new window.google.maps.LatLngBounds();
+      apiaryMarkers.current.forEach((marker: any) => {
+        const position = marker.getPosition();
+        if (position) {
+          bounds.extend(position);
+        }
+      });
+      
+      if (apiaryMarkers.current.length === 1) {
+        // If only one marker, center on it with a reasonable zoom
+        const position = apiaryMarkers.current[0].getPosition();
+        if (position) {
+          map.setCenter(position);
+          map.setZoom(15);
+        }
+      } else {
+        // If multiple markers, fit bounds
+        map.fitBounds(bounds);
+        
+        // Ensure minimum zoom level
+        const listener = window.google.maps.event.addListener(map, 'bounds_changed', () => {
+          if (map.getZoom() && map.getZoom() > 18) {
+            map.setZoom(18);
+          }
+          window.google.maps.event.removeListener(listener);
+        });
+      }
+    }
+  } else {
+    console.log('No apiaries to display on map');
+  }
+};
+
+  // Helper function to handle mini map clicks for apiary creation
+  const handleMiniMapClick = (event: any) => {
+    const lat = event.latLng?.lat();
+    const lng = event.latLng?.lng();
+    
+    if (!lat || !lng) return;
+    
+    console.log('Mini map clicked for apiary location:', { lat, lng });
+    
+    // Update the apiary form data with the selected location - FIXED TYPE ISSUE
+    setApiaryFormData((prev) => ({
+  ...prev,
+  location: {
+    lat: lat,
+    lng: lng,
+    latitude: lat,
+    longitude: lng,
+    name: `Location ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+    id: Date.now()
+  }
+}));
+    // Add a temporary marker to show selected location
+    if (tempMarker.current) {
+      tempMarker.current.setMap(null);
+    }
+    
+    if (miniGoogleMapRef.current) {
+      tempMarker.current = new window.google.maps.Marker({
+        position: { lat, lng },
+        map: miniGoogleMapRef.current,
+        title: 'Selected Apiary Location',
+        icon: {
+          url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+            <svg width="30" height="40" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
+              <path d="M15 0C9.477 0 5 4.477 5 10c0 7.5 10 25 10 25s10-17.5 10-25c0-5.523-4.477-10-10-10z" fill="#10B981" stroke="#059669" stroke-width="2"/>
+              <circle cx="15" cy="10" r="4" fill="white"/>
+              <text x="15" y="15" font-family="Arial" font-size="10" font-weight="bold" text-anchor="middle" fill="#10B981">✓</text>
+            </svg>
+          `),
+          scaledSize: new window.google.maps.Size(30, 40),
+          anchor: new window.google.maps.Point(15, 40)
+        }
+      });
+    }
+  };
+
+  // Load Google Maps API if not already loaded
+  if (!window.google) {
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places`;
+    script.async = true;
+    script.onload = initMaps;
+    script.onerror = () => {
+      console.error('Failed to load Google Maps API');
+    };
+    document.head.appendChild(script);
+  } else {
+    initMaps();
+  }
+
+  // Cleanup function
+  return () => {
+    // Clean up any event listeners if needed
+    if (googleMapRef.current) {
+      window.google?.maps?.event?.clearInstanceListeners(googleMapRef.current);
+    }
+    if (miniGoogleMapRef.current) {
+      window.google?.maps?.event?.clearInstanceListeners(miniGoogleMapRef.current);
+    }
+    
+    // Clean up markers
+    if (apiaryMarkers.current && Array.isArray(apiaryMarkers.current)) {
+      apiaryMarkers.current.forEach((marker: any) => marker.setMap(null));
+    }
+    if (tempMarker.current) {
+      tempMarker.current.setMap(null);
+    }
+  };
+}, [showApiaryModal, availableApiaries]);
 
 
  
@@ -2096,105 +2849,169 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
               </div>
             </div>
 
-            {/* Location Section */}
-            <div className="bg-white p-4 rounded-lg shadow-sm border">
-              <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
-                <div className="bg-green-100 p-1 rounded mr-2">
-                  <MapPin className="h-4 w-4 text-green-600" />
-                </div>
-                Location Settings
-              </h4>
+           <div className="bg-white p-4 rounded-lg shadow-sm border">
+  <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
+    <div className="bg-green-100 p-1 rounded mr-2">
+      <MapPin className="h-4 w-4 text-green-600" />
+    </div>
+    Location Settings
+  </h4>
 
-              {/* Current Location Display */}
-              {apiaryFormData.location ? (
-                <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <div className="flex items-center mb-2">
-                        <div className="bg-green-100 p-1 rounded mr-2">
-                          <CheckCircle className="h-4 w-4 text-green-600" />
-                        </div>
-                        <p className="font-medium text-green-800">
-                          {apiaryFormData.location.name || 'Selected Location'}
-                        </p>
-                      </div>
-                      <p className="text-sm text-green-600 ml-7">
-                        📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
-                      title="Remove location"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-center">
-                    <div className="bg-amber-100 p-1 rounded mr-2">
-                      <AlertCircle className="h-4 w-4 text-amber-600" />
-                    </div>
-                    <p className="text-sm text-amber-800">
-                      Click on the map to set the apiary location
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Saved Locations Dropdown */}
-              {savedApiaryLocations.length > 0 && (
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Quick Select from Saved Locations
-                  </label>
-                  <select
-  value="" // Keep this as empty to always show placeholder
-  onChange={(e) => {
-    const apiaryId = e.target.value;
-    if (apiaryId) {
-      // Ensure selectedApiaries is an array
-      const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
-      
-      // Check if apiary is not already selected
-      const isAlreadySelected = currentSelected.some(a => a.id === apiaryId);
-      
-      if (!isAlreadySelected) {
-        const apiary = availableApiaries.find(a => a.id === apiaryId);
-        if (apiary) {
-          setSelectedApiaries(prev => {
-            const prevArray = Array.isArray(prev) ? prev : [];
-            return [...prevArray, { ...apiary, kilosCollected: 0 }];
-          });
-        }
-      }
-      
-      // Reset the select value to empty after selection
-      e.target.value = "";
-    }
-  }}
-  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
->
-  <option value="">Select an apiary to add...</option>
-  {Array.isArray(availableApiaries) && 
-    availableApiaries
-      .filter(apiary => {
-        const currentSelected = Array.isArray(selectedApiaries) ? selectedApiaries : [];
-        return !currentSelected.some(selected => selected.id === apiary.id);
-      })
-      .map(apiary => (
-        <option key={apiary.id} value={apiary.id}>
-          {apiary.name} (ID: {apiary.number}) - {apiary.hiveCount} hives
-        </option>
-      ))
-  }
-</select>
-                </div>
-              )}
+  {/* Current Location Display */}
+  {apiaryFormData.location ? (
+    <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+      <div className="flex justify-between items-start">
+        <div className="flex-1">
+          <div className="flex items-center mb-2">
+            <div className="bg-green-100 p-1 rounded mr-2">
+              <CheckCircle className="h-4 w-4 text-green-600" />
             </div>
+            <p className="font-medium text-green-800">
+              {apiaryFormData.location.name || 'Selected Location'}
+            </p>
+          </div>
+          <p className="text-sm text-green-600 ml-7">
+            📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
+          className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+          title="Remove location"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
+      <div className="flex items-center">
+        <div className="bg-amber-100 p-1 rounded mr-2">
+          <AlertCircle className="h-4 w-4 text-amber-600" />
+        </div>
+        <p className="text-sm text-amber-800">
+          Click on the map or paste a Google Maps link to set the apiary location
+        </p>
+      </div>
+    </div>
+  )}
+
+  {/* Google Maps Link Input Section */}
+  <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+    <div className="flex items-center mb-3">
+      <div className="bg-blue-100 p-1 rounded mr-2">
+        <Globe className="h-4 w-4 text-blue-600" />
+      </div>
+      <h5 className="font-medium text-blue-800">Set Location via Link or Coordinates</h5>
+    </div>
+    
+    <p className="text-sm text-blue-600 mb-3">
+      Paste a Google Maps link or enter coordinates directly
+    </p>
+    
+    <div className="flex space-x-2">
+      <input
+        type="text"
+        value={mapsLinkInput}
+        onChange={(e) => setMapsLinkInput(e.target.value)}
+        className="flex-1 px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+        placeholder="https://maps.google.com/... or 25.2048, 55.2708"
+      />
+      <button
+        type="button"
+        onClick={handleMapsLinkSubmit}
+        disabled={!mapsLinkInput.trim()}
+        className={`px-4 py-2 rounded-lg text-white font-medium transition-all flex items-center space-x-1 ${
+          mapsLinkInput.trim()
+            ? 'bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg'
+            : 'bg-gray-300 cursor-not-allowed'
+        }`}
+      >
+        <MapPin className="h-4 w-4" />
+        <span className="text-sm">Set</span>
+      </button>
+    </div>
+    
+    <div className="mt-3 text-xs text-blue-500">
+      <p>💡 <strong>Supported formats:</strong></p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 ml-4">
+        <div>
+          <p><strong>📍 Direct Coordinates:</strong></p>
+          <ul className="ml-2 space-y-1">
+            <li>• 25.2048, 55.2708</li>
+            <li>• 25.2048 55.2708</li>
+          </ul>
+        </div>
+        <div>
+          <p><strong>🔗 Google Maps Links:</strong></p>
+          <ul className="ml-2 space-y-1">
+            <li>• Full browser URLs</li>
+            <li>• maps.google.com links</li>
+            <li>• Place sharing links</li>
+          </ul>
+        </div>
+      </div>
+      <div className="mt-2 p-2 bg-blue-100 rounded text-blue-700">
+        <p><strong>📱 For shortened links (goo.gl, maps.app.goo.gl):</strong></p>
+        <p>Click "Set" and we'll help you get the full URL or coordinates!</p>
+      </div>
+    </div>
+  </div>
+
+  {/* Saved Locations Dropdown */}
+  {savedApiaryLocations.length > 0 && (
+    <div className="mb-4">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Quick Select from Saved Locations
+      </label>
+      <select
+        value=""
+        onChange={(e) => {
+          const locationId = e.target.value;
+          if (locationId) {
+            const selectedLocation = savedApiaryLocations.find(loc => loc.id === parseInt(locationId));
+            if (selectedLocation) {
+              console.log('Selected location from saved locations:', selectedLocation);
+              
+              // Create proper ApiaryLocation object
+              const apiaryLocation = {
+                id: selectedLocation.id,
+                name: selectedLocation.name,
+                latitude: selectedLocation.latitude,
+                longitude: selectedLocation.longitude,
+                lat: selectedLocation.latitude,  // Required by LocationCoordinates
+                lng: selectedLocation.longitude, // Required by LocationCoordinates
+                createdAt: selectedLocation.createdAt
+              };
+              
+              setApiaryFormData(prev => ({
+                ...prev,
+                location: apiaryLocation
+              }));
+
+              // Center the map on the selected location
+              if (miniGoogleMapRef.current) {
+                const newCenter = new google.maps.LatLng(selectedLocation.latitude, selectedLocation.longitude);
+                miniGoogleMapRef.current.setCenter(newCenter);
+                miniGoogleMapRef.current.setZoom(15);
+              }
+            }
+            (e.target as HTMLSelectElement).value = "";
+          }
+        }}
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
+      >
+        <option value="">Select your location...</option>
+        {savedApiaryLocations.map(location => (
+          <option key={location.id} value={location.id}>
+            {location.name} - Lat: {location.latitude?.toFixed(4)}, Lng: {location.longitude?.toFixed(4)}
+          </option>
+        ))}
+      </select>
+    </div>
+  )}
+</div>
           </div>
         </div>
 
@@ -3134,116 +3951,111 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
   )}
 </div>
           {/* Certification Selection for Jars */}
-          {Object.keys(apiaryJars).length > 0 && (
-            <div className="border rounded-md p-4 mb-4">
-              <h4 className="font-medium mb-3">Select Certifications for Your Jars</h4>
-              <p className="text-sm text-gray-600 mb-4">
-                Choose which certifications you want for each jar type. Each jar requires 1 token regardless of certification type.
+{Object.keys(apiaryJars).length > 0 && (
+  <div className="border rounded-md p-4 mb-4">
+    <h4 className="font-medium mb-3">Select Certifications for Your Jars</h4>
+    <p className="text-sm text-gray-600 mb-4">
+      Choose which certifications you want for each jar type. Each jar requires 1 token regardless of certification type.
+    </p>
+    
+    <div className="space-y-4">
+      {Object.values(apiaryJars).flat().map((jar, index) => (
+        <div key={jar.id} className="border rounded-md p-4 bg-gray-50">
+          <div className="flex items-center justify-between mb-4">
+            <h5 className="font-medium">
+              {jar.quantity}x {jar.size}g jars 
+              <span className="text-sm text-gray-500 ml-2">
+                ({((jar.size * jar.quantity) / 1000).toFixed(2)} kg total)
+              </span>
+            </h5>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Origin Certification */}
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id={`origin-${jar.id}`}
+                checked={jarCertifications[jar.id]?.origin || false}
+                onChange={(e) => {
+                  const currentCertification = jarCertifications[jar.id] || {};
+                  const updatedCertification: JarCertification = {
+                    ...currentCertification,
+                    origin: e.target.checked,
+                    selectedType: getSelectedType({
+                      ...currentCertification,
+                      origin: e.target.checked
+                    }) as 'origin' | 'quality' | 'both' | undefined
+                  };
+                  
+                  setJarCertifications({
+                    ...jarCertifications,
+                    [jar.id]: updatedCertification
+                  });
+                }}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 rounded"
+              />
+              <label htmlFor={`origin-${jar.id}`} className="ml-2 text-sm">
+                <span className="font-medium text-blue-600">Origin Certification</span>
+                <br />
+                <span className="text-xs text-gray-500">Certifies geographic origin</span>
+              </label>
+            </div>
+
+            {/* Quality Certification */}
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id={`quality-${jar.id}`}
+                checked={jarCertifications[jar.id]?.quality || false}
+                onChange={(e) => {
+                  const currentCertification = jarCertifications[jar.id] || {};
+                  const updatedCertification: JarCertification = {
+                    ...currentCertification,
+                    quality: e.target.checked,
+                    selectedType: getSelectedType({
+                      ...currentCertification,
+                      quality: e.target.checked
+                    }) as 'origin' | 'quality' | 'both' | undefined
+                  };
+                  
+                  // Remove the 'both' property if it exists to avoid type conflicts
+                  if ('both' in updatedCertification) {
+                    delete updatedCertification.both;
+                  }
+                  
+                  setJarCertifications({
+                    ...jarCertifications,
+                    [jar.id]: updatedCertification
+                  });
+                }}
+                className="h-4 w-4 text-green-600 focus:ring-green-500 rounded"
+              />
+              <label htmlFor={`quality-${jar.id}`} className="ml-2 text-sm">
+                <span className="font-medium text-green-600">Quality Certification</span>
+                <br />
+                <span className="text-xs text-gray-500">Certifies quality standards</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Show warning if no certification selected */}
+          {!jarCertifications[jar.id]?.origin && !jarCertifications[jar.id]?.quality && (
+            <div className="mt-3 p-2 bg-orange-100 border border-orange-300 rounded-md">
+              <p className="text-orange-700 text-sm">
+                ⚠️ Please select at least one certification type for these jars.
               </p>
-              
-              <div className="space-y-4">
-                {Object.values(apiaryJars).flat().map((jar, index) => (
-                  <div key={jar.id} className="border rounded-md p-4 bg-gray-50">
-                    <div className="flex items-center justify-between mb-4">
-                      <h5 className="font-medium">
-                        {jar.quantity}x {jar.size}g jars 
-                        <span className="text-sm text-gray-500 ml-2">
-                          ({((jar.size * jar.quantity) / 1000).toFixed(2)} kg total)
-                        </span>
-                      </h5>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {/* Origin Certification */}
-                      <div className="flex items-center">
-                        <input
-                          type="radio"
-                          name={`certification-${jar.id}`}
-                          id={`origin-${jar.id}`}
-                          value="origin"
-                          checked={jarCertifications[jar.id]?.selectedType === 'origin'}
-                          onChange={(e) => {
-                            setJarCertifications({
-                              ...jarCertifications,
-                              [jar.id]: {
-                                selectedType: 'origin',
-                                origin: true,
-                                quality: false,
-                                both: false
-                              }
-                            });
-                          }}
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500"
-                        />
-                        <label htmlFor={`origin-${jar.id}`} className="ml-2 text-sm">
-                          <span className="font-medium text-blue-600">Origin Certification</span>
-                          <br />
-                          <span className="text-xs text-gray-500">Certifies geographic origin</span>
-                        </label>
-                      </div>
+            </div>
+          )}
 
-                      {/* Quality Certification */}
-                      <div className="flex items-center">
-                        <input
-                          type="radio"
-                          name={`certification-${jar.id}`}
-                          id={`quality-${jar.id}`}
-                          value="quality"
-                          checked={jarCertifications[jar.id]?.selectedType === 'quality'}
-                          onChange={(e) => {
-                            setJarCertifications({
-                              ...jarCertifications,
-                              [jar.id]: {
-                                selectedType: 'quality',
-                                origin: false,
-                                quality: true,
-                                both: false
-                              }
-                            });
-                          }}
-                          className="h-4 w-4 text-green-600 focus:ring-green-500"
-                        />
-                        <label htmlFor={`quality-${jar.id}`} className="ml-2 text-sm">
-                          <span className="font-medium text-green-600">Quality Certification</span>
-                          <br />
-                          <span className="text-xs text-gray-500">Certifies quality standards</span>
-                        </label>
-                      </div>
-
-                      {/* Both Certifications */}
-                      <div className="flex items-center">
-                        <input
-                          type="radio"
-                          name={`certification-${jar.id}`}
-                          id={`both-${jar.id}`}
-                          value="both"
-                          checked={jarCertifications[jar.id]?.selectedType === 'both'}
-                          onChange={(e) => {
-                            setJarCertifications({
-                              ...jarCertifications,
-                              [jar.id]: {
-                                selectedType: 'both',
-                                origin: false,
-                                quality: false,
-                                both: true
-                              }
-                            });
-                          }}
-                          className="h-4 w-4 text-purple-600 focus:ring-purple-500"
-                        />
-                        <label htmlFor={`both-${jar.id}`} className="ml-2 text-sm">
-                          <span className="font-medium text-purple-600">Both Certifications</span>
-                          <br />
-                          <span className="text-xs text-gray-500">Origin & Quality together</span>
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Show warning if no certification selected */}
-                    {!jarCertifications[jar.id]?.selectedType && (
-                      <div className="mt-3 p-2 bg-orange-100 border border-orange-300 rounded-md">
-                        <p className="text-orange-700 text-sm">
-                          ⚠️ Please select a certification type for these jars.
+                    {/* Show selected certifications */}
+                    {(jarCertifications[jar.id]?.origin || jarCertifications[jar.id]?.quality) && (
+                      <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded-md">
+                        <p className="text-blue-700 text-sm">
+                          ✓ Selected: {[
+                            jarCertifications[jar.id]?.origin && 'Origin',
+                            jarCertifications[jar.id]?.quality && 'Quality'
+                          ].filter(Boolean).join(' + ')}
                         </p>
                       </div>
                     )}
@@ -3256,29 +4068,29 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
                 <h5 className="font-medium mb-2">Certification Summary</h5>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">Origin Certifications:</span>
+                    <span className="text-gray-600">Origin Only:</span>
                     <span className="ml-2 font-bold text-blue-600">
-                      {Object.values(jarCertifications).filter(cert => cert?.origin).length} jar types
+                      {Object.values(jarCertifications).filter(cert => cert?.origin && !cert?.quality).length} jar types
                     </span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Quality Certifications:</span>
+                    <span className="text-gray-600">Quality Only:</span>
                     <span className="ml-2 font-bold text-green-600">
-                      {Object.values(jarCertifications).filter(cert => cert?.quality).length} jar types
+                      {Object.values(jarCertifications).filter(cert => cert?.quality && !cert?.origin).length} jar types
                     </span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Both Certifications:</span>
+                    <span className="text-gray-600">Both Selected:</span>
                     <span className="ml-2 font-bold text-purple-600">
-                      {Object.values(jarCertifications).filter(cert => cert?.both).length} jar types
+                      {Object.values(jarCertifications).filter(cert => cert?.origin && cert?.quality).length} jar types
                     </span>
                   </div>
                   <div>
-  <span className="text-gray-600">Total Tokens:</span>
-  <span className="ml-2 font-bold text-yellow-600">
-    {Object.values(apiaryJars).flat().reduce((sum, jar) => sum + jar.quantity, 0)} tokens
-  </span>
-</div>
+                    <span className="text-gray-600">Total Tokens:</span>
+                    <span className="ml-2 font-bold text-yellow-600">
+                      {Object.values(apiaryJars).flat().reduce((sum, jar) => sum + jar.quantity, 0)} tokens
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3289,11 +4101,12 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
             <div className="border rounded-md p-4 mb-4">
               <h4 className="font-medium mb-3">Required Documents</h4>
               
-              {/* Production Report Upload - for Origin or Both */}
+              {/* Production Report Upload - for Origin certification */}
               {needsProductionReport() && (
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Production Report <span className="text-red-500">*</span>
+                    <span className="text-xs text-gray-500 ml-2">(Required for Origin certification)</span>
                   </label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-blue-400 transition-colors">
                     <input
@@ -3322,11 +4135,12 @@ const removeJarFromApiary = (apiaryIndex: number, jarId: number) => {
                 </div>
               )}
 
-              {/* Lab Report Upload - for Quality or Both */}
+              {/* Lab Report Upload - for Quality certification */}
               {needsLabReport() && (
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Lab Report <span className="text-red-500">*</span>
+                    <span className="text-xs text-gray-500 ml-2">(Required for Quality certification)</span>
                   </label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-green-400 transition-colors">
                     <input
