@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2, Globe, FileText, AlertCircle, Sparkles, LogOut, Plus } from 'lucide-react';
+import { Layers, Database, Tag, Package, RefreshCw, Menu, X, Home, Settings, Users, Activity, HelpCircle, Wallet, PlusCircle, MapPin, CheckCircle, Trash2, Globe, FileText, AlertCircle, Sparkles, LogOut, Plus, Star } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 
@@ -968,7 +968,7 @@ const fetchSavedApiaryLocations = async () => {
                sessionStorage.getItem('auth-token');
     }
 
-    const headers: HeadersInit = {
+    const headers = {
       'Content-Type': 'application/json',
     };
 
@@ -977,18 +977,83 @@ const fetchSavedApiaryLocations = async () => {
     }
 
     console.log('Fetching saved locations with auth...');
-    const response = await fetch('/api/apiaries/locations', {
+    
+    // First try to get saved location templates
+    const locationsResponse = await fetch('/api/apiaries/locations', {
       headers,
       credentials: 'include',
     });
 
-    if (response.ok) {
-      const locations = await response.json();
-      console.log('Fetched saved locations:', locations);
-      setSavedApiaryLocations(locations);
-    } else {
-      console.error('Failed to fetch saved locations:', response.status);
+    let locations = [];
+
+    if (locationsResponse.ok) {
+      const locationTemplates = await locationsResponse.json();
+      console.log('Fetched location templates:', locationTemplates);
+      
+      locations = locationTemplates.map(loc => ({
+        id: loc.id,
+        name: loc.name,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        createdAt: loc.createdAt,
+        isTemplate: true // Mark as template
+      }));
     }
+
+    // Also get unique locations from all apiaries (including those with batchId)
+    const apiariesResponse = await fetch('/api/apiaries', {
+      headers,
+      credentials: 'include',
+    });
+
+    if (apiariesResponse.ok) {
+      const apiariesData = await apiariesResponse.json();
+      console.log('Fetched apiaries for location extraction:', apiariesData);
+      
+      let apiaries = [];
+      if (Array.isArray(apiariesData)) {
+        apiaries = apiariesData;
+      } else if (apiariesData.apiaries && Array.isArray(apiariesData.apiaries)) {
+        apiaries = apiariesData.apiaries;
+      } else if (apiariesData.data && Array.isArray(apiariesData.data)) {
+        apiaries = apiariesData.data;
+      }
+
+      // Extract unique locations from apiaries
+      const apiaryLocations = apiaries
+        .filter(apiary => apiary.latitude && apiary.longitude)
+        .map(apiary => ({
+          id: `apiary_${apiary.id}`, // Prefix to avoid ID conflicts
+          name: `${apiary.name} (${apiary.number})`,
+          latitude: apiary.latitude,
+          longitude: apiary.longitude,
+          createdAt: apiary.createdAt,
+          isTemplate: false, // Mark as from apiary
+          originalApiaryId: apiary.id
+        }));
+
+      // Remove duplicates based on coordinates (within 0.001 degree tolerance)
+      const uniqueApiaryLocations = apiaryLocations.filter((loc, index, arr) => {
+        return !arr.slice(0, index).some(existingLoc => 
+          Math.abs(existingLoc.latitude - loc.latitude) < 0.001 &&
+          Math.abs(existingLoc.longitude - loc.longitude) < 0.001
+        );
+      });
+
+      // Also remove apiaries that are too close to existing templates
+      const uniqueNewLocations = uniqueApiaryLocations.filter(apiaryLoc => {
+        return !locations.some(templateLoc => 
+          Math.abs(templateLoc.latitude - apiaryLoc.latitude) < 0.001 &&
+          Math.abs(templateLoc.longitude - apiaryLoc.longitude) < 0.001
+        );
+      });
+
+      locations = [...locations, ...uniqueNewLocations];
+    }
+
+    console.log('Final processed locations:', locations);
+    setSavedApiaryLocations(locations);
+    
   } catch (error) {
     console.error('Error fetching apiary locations:', error);
   }
@@ -2700,169 +2765,223 @@ const handleLocationCancel = () => {
               </div>
             </div>
 
-           <div className="bg-white p-4 rounded-lg shadow-sm border">
-  <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
-    <div className="bg-green-100 p-1 rounded mr-2">
-      <MapPin className="h-4 w-4 text-green-600" />
-    </div>
-    Location Settings
-  </h4>
+            {/* Location Settings Section */}
+            <div className="bg-white p-4 rounded-lg shadow-sm border">
+              <h4 className="font-semibold text-gray-800 mb-4 flex items-center">
+                <div className="bg-green-100 p-1 rounded mr-2">
+                  <MapPin className="h-4 w-4 text-green-600" />
+                </div>
+                Location Settings
+              </h4>
 
-  {/* Current Location Display */}
-  {apiaryFormData.location ? (
-    <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
-      <div className="flex justify-between items-start">
-        <div className="flex-1">
-          <div className="flex items-center mb-2">
-            <div className="bg-green-100 p-1 rounded mr-2">
-              <CheckCircle className="h-4 w-4 text-green-600" />
+              {/* Debug info - Show more detailed information */}
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="text-xs text-blue-800">
+                  <p><strong>🔍 Debug Info:</strong></p>
+                  <div className="mt-1 space-y-1">
+                    <p>• Saved locations count: <span className="font-mono">{savedApiaryLocations?.length || 0}</span></p>
+                    <p>• Array exists: <span className="font-mono">{savedApiaryLocations ? 'Yes' : 'No'}</span></p>
+                    <p>• Array type: <span className="font-mono">{Array.isArray(savedApiaryLocations) ? 'Array' : typeof savedApiaryLocations}</span></p>
+                    <p>• Show condition: <span className="font-mono">{(savedApiaryLocations && savedApiaryLocations.length > 0).toString()}</span></p>
+                    {savedApiaryLocations && savedApiaryLocations.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-blue-600 hover:text-blue-800">Show saved locations data</summary>
+                        <pre className="mt-2 p-2 bg-white rounded border text-xs overflow-x-auto">
+                          {JSON.stringify(savedApiaryLocations, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Current Location Display */}
+              {apiaryFormData.location ? (
+                <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center mb-2">
+                        <div className="bg-green-100 p-1 rounded mr-2">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                        </div>
+                        <p className="font-medium text-green-800">
+                          {apiaryFormData.location.name || 'Selected Location'}
+                        </p>
+                      </div>
+                      <p className="text-sm text-green-600 ml-7">
+                        📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+                      title="Remove location"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
+                  <div className="flex items-center">
+                    <div className="bg-amber-100 p-1 rounded mr-2">
+                      <AlertCircle className="h-4 w-4 text-amber-600" />
+                    </div>
+                    <p className="text-sm text-amber-800">
+                      Choose from saved locations, click on the map, or paste a Google Maps link
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Saved Locations Dropdown - Always show, but with different content */}
+              <div className="mb-4 p-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg">
+                <div className="flex items-center mb-3">
+                  <div className="bg-purple-100 p-1 rounded mr-2">
+                    <Star className="h-4 w-4 text-purple-600" />
+                  </div>
+                  <h5 className="font-medium text-purple-800">Saved Locations</h5>
+                </div>
+                
+                {savedApiaryLocations && savedApiaryLocations.length > 0 ? (
+                  <>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const locationId = e.target.value;
+                        if (locationId) {
+                          const selectedLocation = savedApiaryLocations.find(loc => loc.id === parseInt(locationId));
+                          if (selectedLocation) {
+                            console.log('Selected location from saved locations:', selectedLocation);
+                            
+                            // Create proper ApiaryLocation object
+                            const apiaryLocation = {
+                              id: selectedLocation.id,
+                              name: selectedLocation.name,
+                              latitude: selectedLocation.latitude,
+                              longitude: selectedLocation.longitude,
+                              lat: selectedLocation.latitude,  // Required by LocationCoordinates
+                              lng: selectedLocation.longitude, // Required by LocationCoordinates
+                              createdAt: selectedLocation.createdAt
+                            };
+                            
+                            setApiaryFormData(prev => ({
+                              ...prev,
+                              location: apiaryLocation
+                            }));
+
+                            // Center the map on the selected location
+                            if (miniGoogleMapRef.current) {
+                              const newCenter = new google.maps.LatLng(selectedLocation.latitude, selectedLocation.longitude);
+                              miniGoogleMapRef.current.setCenter(newCenter);
+                              miniGoogleMapRef.current.setZoom(15);
+                            }
+                          }
+                          // Reset the select value
+                          e.target.value = "";
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                    >
+                      <option value="">🏠 Select from your saved locations...</option>
+                      {savedApiaryLocations.map(location => (
+                        <option key={location.id} value={location.id}>
+                          📍 {location.name} - {location.latitude?.toFixed(4)}, {location.longitude?.toFixed(4)}
+                        </option>
+                      ))}
+                    </select>
+                    
+                    <p className="text-xs text-purple-600 mt-2">
+                      💡 Choose from locations you've previously saved to quickly set up your apiary
+                    </p>
+                  </>
+                ) : (
+                  <div className="text-center py-4">
+                    <div className="text-purple-300 mb-2">
+                      <Star className="h-8 w-8 mx-auto" />
+                    </div>
+                    <p className="text-sm text-purple-600 mb-2">No saved locations yet</p>
+                    <p className="text-xs text-purple-500">
+                      Create your first apiary to start building your saved locations library
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // You can add a function here to manually refresh saved locations
+                        console.log('Refreshing saved locations...');
+                        // Example: refreshSavedLocations();
+                      }}
+                      className="mt-2 px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-md text-xs transition-colors"
+                    >
+                      🔄 Refresh Locations
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Google Maps Link Input Section */}
+              <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center mb-3">
+                  <div className="bg-blue-100 p-1 rounded mr-2">
+                    <Globe className="h-4 w-4 text-blue-600" />
+                  </div>
+                  <h5 className="font-medium text-blue-800">Set Location via Link or Coordinates</h5>
+                </div>
+                
+                <p className="text-sm text-blue-600 mb-3">
+                  Paste a Google Maps link or enter coordinates directly
+                </p>
+                
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={mapsLinkInput}
+                    onChange={(e) => setMapsLinkInput(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                    placeholder="https://maps.google.com/... or 25.2048, 55.2708"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleMapsLinkSubmit}
+                    disabled={!mapsLinkInput.trim()}
+                    className={`px-4 py-2 rounded-lg text-white font-medium transition-all flex items-center space-x-1 ${
+                      mapsLinkInput.trim()
+                        ? 'bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg'
+                        : 'bg-gray-300 cursor-not-allowed'
+                    }`}
+                  >
+                    <MapPin className="h-4 w-4" />
+                    <span className="text-sm">Set</span>
+                  </button>
+                </div>
+                
+                <div className="mt-3 text-xs text-blue-500">
+                  <p>💡 <strong>Supported formats:</strong></p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 ml-4">
+                    <div>
+                      <p><strong>📍 Direct Coordinates:</strong></p>
+                      <ul className="ml-2 space-y-1">
+                        <li>• 25.2048, 55.2708</li>
+                        <li>• 25.2048 55.2708</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p><strong>🔗 Google Maps Links:</strong></p>
+                      <ul className="ml-2 space-y-1">
+                        <li>• Full browser URLs</li>
+                        <li>• maps.google.com links</li>
+                        <li>• Place sharing links</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div className="mt-2 p-2 bg-blue-100 rounded text-blue-700">
+                    <p><strong>📱 For shortened links (goo.gl, maps.app.goo.gl):</strong></p>
+                    <p>Click "Set" and we'll help you get the full URL or coordinates!</p>
+                  </div>
+                </div>
+              </div>
             </div>
-            <p className="font-medium text-green-800">
-              {apiaryFormData.location.name || 'Selected Location'}
-            </p>
-          </div>
-          <p className="text-sm text-green-600 ml-7">
-            📍 {apiaryFormData.location.latitude.toFixed(6)}, {apiaryFormData.location.longitude.toFixed(6)}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setApiaryFormData(prev => ({ ...prev, location: null }))}
-          className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
-          title="Remove location"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  ) : (
-    <div className="mb-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg">
-      <div className="flex items-center">
-        <div className="bg-amber-100 p-1 rounded mr-2">
-          <AlertCircle className="h-4 w-4 text-amber-600" />
-        </div>
-        <p className="text-sm text-amber-800">
-          Click on the map or paste a Google Maps link to set the apiary location
-        </p>
-      </div>
-    </div>
-  )}
-
-  {/* Google Maps Link Input Section */}
-  <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
-    <div className="flex items-center mb-3">
-      <div className="bg-blue-100 p-1 rounded mr-2">
-        <Globe className="h-4 w-4 text-blue-600" />
-      </div>
-      <h5 className="font-medium text-blue-800">Set Location via Link or Coordinates</h5>
-    </div>
-    
-    <p className="text-sm text-blue-600 mb-3">
-      Paste a Google Maps link or enter coordinates directly
-    </p>
-    
-    <div className="flex space-x-2">
-      <input
-        type="text"
-        value={mapsLinkInput}
-        onChange={(e) => setMapsLinkInput(e.target.value)}
-        className="flex-1 px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-        placeholder="https://maps.google.com/... or 25.2048, 55.2708"
-      />
-      <button
-        type="button"
-        onClick={handleMapsLinkSubmit}
-        disabled={!mapsLinkInput.trim()}
-        className={`px-4 py-2 rounded-lg text-white font-medium transition-all flex items-center space-x-1 ${
-          mapsLinkInput.trim()
-            ? 'bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg'
-            : 'bg-gray-300 cursor-not-allowed'
-        }`}
-      >
-        <MapPin className="h-4 w-4" />
-        <span className="text-sm">Set</span>
-      </button>
-    </div>
-    
-    <div className="mt-3 text-xs text-blue-500">
-      <p>💡 <strong>Supported formats:</strong></p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 ml-4">
-        <div>
-          <p><strong>📍 Direct Coordinates:</strong></p>
-          <ul className="ml-2 space-y-1">
-            <li>• 25.2048, 55.2708</li>
-            <li>• 25.2048 55.2708</li>
-          </ul>
-        </div>
-        <div>
-          <p><strong>🔗 Google Maps Links:</strong></p>
-          <ul className="ml-2 space-y-1">
-            <li>• Full browser URLs</li>
-            <li>• maps.google.com links</li>
-            <li>• Place sharing links</li>
-          </ul>
-        </div>
-      </div>
-      <div className="mt-2 p-2 bg-blue-100 rounded text-blue-700">
-        <p><strong>📱 For shortened links (goo.gl, maps.app.goo.gl):</strong></p>
-        <p>Click "Set" and we'll help you get the full URL or coordinates!</p>
-      </div>
-    </div>
-  </div>
-
-  {/* Saved Locations Dropdown */}
-  {savedApiaryLocations.length > 0 && (
-    <div className="mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        Quick Select from Saved Locations
-      </label>
-      <select
-        value=""
-        onChange={(e) => {
-          const locationId = e.target.value;
-          if (locationId) {
-            const selectedLocation = savedApiaryLocations.find(loc => loc.id === parseInt(locationId));
-            if (selectedLocation) {
-              console.log('Selected location from saved locations:', selectedLocation);
-              
-              // Create proper ApiaryLocation object
-              const apiaryLocation = {
-                id: selectedLocation.id,
-                name: selectedLocation.name,
-                latitude: selectedLocation.latitude,
-                longitude: selectedLocation.longitude,
-                lat: selectedLocation.latitude,  // Required by LocationCoordinates
-                lng: selectedLocation.longitude, // Required by LocationCoordinates
-                createdAt: selectedLocation.createdAt
-              };
-              
-              setApiaryFormData(prev => ({
-                ...prev,
-                location: apiaryLocation
-              }));
-
-              // Center the map on the selected location
-              if (miniGoogleMapRef.current) {
-                const newCenter = new google.maps.LatLng(selectedLocation.latitude, selectedLocation.longitude);
-                miniGoogleMapRef.current.setCenter(newCenter);
-                miniGoogleMapRef.current.setZoom(15);
-              }
-            }
-            (e.target as HTMLSelectElement).value = "";
-          }
-        }}
-        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-      >
-        <option value="">Select your location...</option>
-        {savedApiaryLocations.map(location => (
-          <option key={location.id} value={location.id}>
-            {location.name} - Lat: {location.latitude?.toFixed(4)}, Lng: {location.longitude?.toFixed(4)}
-          </option>
-        ))}
-      </select>
-    </div>
-  )}
-</div>
           </div>
         </div>
 
@@ -3030,7 +3149,6 @@ const handleLocationCancel = () => {
     </div>
   </div>
 )}
-
       {notification.show && (
         <div className="fixed bottom-4 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-lg max-w-md z-50">
           {notification.message}
